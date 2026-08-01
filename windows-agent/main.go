@@ -7,6 +7,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"syscall"
 	"time"
@@ -141,7 +142,7 @@ func windowProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 			_ = appendEvent("Windows session locked")
 		case wtsSessionUnlock:
 			_ = appendEvent("Windows session unlocked")
-			showWelcomeBack()
+			showYouTubeQR()
 		}
 		return 0
 	case wmDestroy:
@@ -153,12 +154,39 @@ func windowProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 	}
 }
 
-func showWelcomeBack() {
-	message := "Welcome back. The Factory Service Windows Agent detected that this Windows session was unlocked."
+func showYouTubeQR() {
+	// Edge opens this as a full-screen, visible QR code only after Windows
+	// reports that the session has been unlocked.
+	qrURL := "https://api.qrserver.com/v1/create-qr-code/?size=900x900&format=svg&ecc=M&data=https%3A%2F%2Fwww.youtube.com%2F"
+	edge, err := findEdge()
+	if err != nil {
+		showError("Microsoft Edge was not found, so the YouTube QR code could not be displayed.")
+		return
+	}
+
+	if err := exec.Command(edge, "--kiosk", qrURL, "--edge-kiosk-type=fullscreen").Start(); err != nil {
+		showError("The YouTube QR code could not be opened: " + err.Error())
+	}
+}
+
+func findEdge() (string, error) {
+	paths := []string{
+		filepath.Join(os.Getenv("ProgramFiles(x86)"), "Microsoft", "Edge", "Application", "msedge.exe"),
+		filepath.Join(os.Getenv("ProgramFiles"), "Microsoft", "Edge", "Application", "msedge.exe"),
+	}
+	for _, path := range paths {
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			return path, nil
+		}
+	}
+	return "", fmt.Errorf("Microsoft Edge executable not found")
+}
+
+func showError(message string) {
 	messageBoxW.Call(
 		0,
 		uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(message))),
-		uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(appName+": Welcome back"))),
+		uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(appName))),
 		mbIconInformation,
 	)
 }
