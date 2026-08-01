@@ -1,0 +1,8 @@
+{
+  "ApiBaseUrl": "https://api.example.invalid",
+  "FactoryId": "factory-not-configured",
+  "DeviceId": "PC-NAME-OR-PROVISIONED-ID",
+  "TestQrPayload": "https://www.youtube.com/",
+  "QrDisplaySeconds": 0,
+  "QrTopMost": true
+}

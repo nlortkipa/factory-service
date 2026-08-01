@@ -1,30 +1,81 @@
 # Factory Service Windows Agent
 
-This is a normal Go proof of concept. It has no installer, startup registry
-entry, PowerShell scripts, or background deployment behavior.
+This is a .NET 10 Windows agent split into two processes:
 
-While it is running, it listens for the current Windows session being locked
-and unlocked. When you sign back in after the screen locks, it opens a
-full-screen QR code that scans to `https://www.youtube.com/` and writes the
-event to a local log.
+- **FactoryService.Service** runs as a Windows Service, starts at boot, owns global
+  machine configuration, records Windows session changes, and is the future home
+  of ESP32/API communication.
+- **FactoryService.Companion** runs in the signed-in user's interactive session.
+  It shows a full-screen QR when it starts and whenever Windows reports that the
+  session was unlocked. It also provides a tray icon.
 
-## Run it
+Windows isolates services in Session 0, so the service intentionally does not
+attempt to draw the QR on the user's desktop.
 
-From this folder:
+## Run during development
+
+Build everything:
 
 ```powershell
-go run .
+dotnet build .\FactoryService.sln
 ```
 
-Leave the terminal open. Lock the PC with `Win + L`, then sign in again. The
-YouTube QR code will open. Press `Alt + F4` to close that QR window.
+Run the service in console/debug mode:
 
-Press `Ctrl + C` in the terminal to stop the agent.
+```powershell
+dotnet run --project .\src\FactoryService.Service
+```
 
-The event log is at `%LOCALAPPDATA%\FactoryService\logs\agent.log`.
+Run the interactive companion:
 
-## Current scope
+```powershell
+dotnet run --project .\src\FactoryService.Companion
+```
 
-This is only a login/unlock detection proof of concept. It does not install
-anything, add a startup entry, or run after Windows boots on its own. Run
-`go run .` whenever you want it active.
+The companion immediately displays the configured QR. Press `Esc` to close the
+QR window; the tray process remains running. Double-click the tray icon to show
+the QR again. Lock and unlock Windows to test the session notification.
+
+## Configuration
+
+The global machine configuration is:
+
+```text
+C:\ProgramData\FactoryService\config.json
+```
+
+The service creates it on first start. Before that, the companion uses safe
+defaults. `config.example.json` documents the current fields. The current QR is
+still a test payload. In production, replace `TestQrPayload` with a short-lived,
+backend-signed token response; do not put a backend signing key in this file.
+
+Logs are written to:
+
+```text
+C:\ProgramData\FactoryService\logs\service.log
+%LOCALAPPDATA%\FactoryService\logs\companion.log
+```
+
+## Install
+
+From an elevated PowerShell window:
+
+```powershell
+.\scripts\install.ps1
+```
+
+The installer publishes both executables as self-contained Windows applications,
+installs the service with automatic
+startup, registers the companion for every user's logon through the machine-wide
+Windows Run key, and launches the companion for the current session. Each signed-in
+user therefore receives a separate companion in that user's interactive session.
+Because the companion stays running, it can show the QR again after every unlock.
+
+To remove the service and companion startup entry:
+
+```powershell
+.\scripts\uninstall.ps1
+```
+
+The uninstall script deliberately leaves installed files and configuration in
+place so they can be recovered or inspected.

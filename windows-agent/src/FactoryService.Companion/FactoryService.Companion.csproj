@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>FactoryService.Companion</RootNamespace>
+    <AssemblyName>FactoryService.Companion</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FactoryService.Common\FactoryService.Common.csproj" />
+    <PackageReference Include="QRCoder" Version="1.8.0" />
+  </ItemGroup>
+</Project>

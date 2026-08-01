@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>FactoryService.Common</RootNamespace>
+  </PropertyGroup>
+</Project>
