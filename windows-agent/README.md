@@ -38,22 +38,16 @@ the QR again. Lock and unlock Windows to test the session notification.
 
 ## Configuration
 
-The global machine configuration is:
-
-```text
-C:\ProgramData\FactoryService\config.json
-```
-
-The service creates it on first start. Before that, the companion uses safe
-defaults. `config.example.json` documents the current fields. The current QR is
-still a test payload. In production, replace `TestQrPayload` with a short-lived,
-backend-signed token response; do not put a backend signing key in this file.
+Configuration is source/deployment-local: `windows-agent/config.json` is copied
+beside both executables and is never stored under AppData or ProgramData.
+`config.example.json` documents the fields. The companion requests short-lived,
+backend-signed QR sessions and never contains the backend signing key.
 
 Logs are written to:
 
 ```text
-C:\ProgramData\FactoryService\logs\service.log
-%LOCALAPPDATA%\FactoryService\logs\companion.log
+<executable directory>\logs\service.log
+<executable directory>\logs\companion.log
 ```
 
 ## Install

@@ -1,0 +1,25 @@
+# .NET
+**/bin/
+**/obj/
+*.user
+*.suo
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+.npm-cache/
+
+# Local development state
+.dev/
+*.db
+*.db-shm
+*.db-wal
+**/logs/
+**/artifacts/
+
+# Verification artifacts
+test-report.*
+spec-render/
+spec-unpacked-*/
+specification.docx
+specification.zip

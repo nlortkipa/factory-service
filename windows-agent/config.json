@@ -1,0 +1,12 @@
+{
+  "ApiBaseUrl": "http://localhost:5000",
+  "AgentKey": "demo-agent-key",
+  "DeviceId": "demo-workstation",
+  "ComputerName": "",
+  "WindowsUsernameOverride": "",
+  "QrRefreshSeconds": 60,
+  "HeartbeatSeconds": 60,
+  "QrDisplaySeconds": 0,
+  "QrTopMost": true,
+  "TestMode": false
+}

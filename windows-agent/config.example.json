@@ -1,8 +1,12 @@
 {
-  "ApiBaseUrl": "https://api.example.invalid",
-  "FactoryId": "factory-not-configured",
+  "ApiBaseUrl": "https://factory-service.example.ge",
+  "AgentKey": "PROVISIONED-WORKSTATION-SECRET",
   "DeviceId": "PC-NAME-OR-PROVISIONED-ID",
-  "TestQrPayload": "https://www.youtube.com/",
+  "ComputerName": "",
+  "WindowsUsernameOverride": "",
+  "QrRefreshSeconds": 60,
+  "HeartbeatSeconds": 60,
   "QrDisplaySeconds": 0,
-  "QrTopMost": true
+  "QrTopMost": true,
+  "TestMode": false
 }

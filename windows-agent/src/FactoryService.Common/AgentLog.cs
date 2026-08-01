@@ -12,10 +12,7 @@ public static class AgentLog
 
     public static void User(string message)
     {
-        string directory = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "FactoryService",
-            "logs");
+        string directory = Path.Combine(AgentConfigStore.ConfigDirectory, "logs");
         Append(directory, "companion.log", message);
     }
 

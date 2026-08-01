@@ -9,5 +9,6 @@
   <ItemGroup>
     <ProjectReference Include="..\FactoryService.Common\FactoryService.Common.csproj" />
     <PackageReference Include="QRCoder" Version="1.8.0" />
+    <None Include="..\..\config.json" Link="config.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
