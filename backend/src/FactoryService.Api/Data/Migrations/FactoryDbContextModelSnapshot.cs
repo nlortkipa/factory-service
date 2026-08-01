@@ -122,11 +122,6 @@ namespace FactoryService.Api.Data.Migrations
                     b.Property<Guid>("PlantId")
                         .HasColumnType("uniqueidentifier");
 
-                    b.Property<string>("PublicDisplayName")
-                        .IsRequired()
-                        .HasMaxLength(80)
-                        .HasColumnType("nvarchar(80)");
-
                     b.Property<Guid?>("WorkstationId")
                         .HasColumnType("uniqueidentifier");
 
@@ -613,13 +608,13 @@ namespace FactoryService.Api.Data.Migrations
                     b.HasOne("FactoryService.Api.Domain.Plant", "Plant")
                         .WithMany()
                         .HasForeignKey("PlantId")
-                        .OnDelete(DeleteBehavior.Cascade)
+                        .OnDelete(DeleteBehavior.NoAction)
                         .IsRequired();
 
                     b.HasOne("FactoryService.Api.Domain.Workstation", "Workstation")
                         .WithMany()
                         .HasForeignKey("WorkstationId")
-                        .OnDelete(DeleteBehavior.SetNull);
+                        .OnDelete(DeleteBehavior.NoAction);
 
                     b.Navigation("Plant");
 
@@ -662,19 +657,19 @@ namespace FactoryService.Api.Data.Migrations
                     b.HasOne("FactoryService.Api.Domain.FactoryOperator", "Operator")
                         .WithMany()
                         .HasForeignKey("OperatorId")
-                        .OnDelete(DeleteBehavior.Cascade)
+                        .OnDelete(DeleteBehavior.NoAction)
                         .IsRequired();
 
                     b.HasOne("FactoryService.Api.Domain.Plant", "Plant")
                         .WithMany()
                         .HasForeignKey("PlantId")
-                        .OnDelete(DeleteBehavior.Cascade)
+                        .OnDelete(DeleteBehavior.NoAction)
                         .IsRequired();
 
                     b.HasOne("FactoryService.Api.Domain.Workstation", "Workstation")
                         .WithMany()
                         .HasForeignKey("WorkstationId")
-                        .OnDelete(DeleteBehavior.Cascade)
+                        .OnDelete(DeleteBehavior.NoAction)
                         .IsRequired();
 
                     b.Navigation("Operator");
@@ -700,31 +695,31 @@ namespace FactoryService.Api.Data.Migrations
                     b.HasOne("FactoryService.Api.Domain.FactoryOperator", "Operator")
                         .WithMany()
                         .HasForeignKey("OperatorId")
-                        .OnDelete(DeleteBehavior.Cascade)
+                        .OnDelete(DeleteBehavior.NoAction)
                         .IsRequired();
 
                     b.HasOne("FactoryService.Api.Domain.Plant", "Plant")
                         .WithMany()
                         .HasForeignKey("PlantId")
-                        .OnDelete(DeleteBehavior.Cascade)
+                        .OnDelete(DeleteBehavior.NoAction)
                         .IsRequired();
 
                     b.HasOne("FactoryService.Api.Domain.QrSession", "QrSession")
                         .WithMany()
                         .HasForeignKey("QrSessionId")
-                        .OnDelete(DeleteBehavior.Cascade)
+                        .OnDelete(DeleteBehavior.NoAction)
                         .IsRequired();
 
                     b.HasOne("FactoryService.Api.Domain.RespondentDevice", "RespondentDevice")
                         .WithMany()
                         .HasForeignKey("RespondentDeviceId")
-                        .OnDelete(DeleteBehavior.Cascade)
+                        .OnDelete(DeleteBehavior.NoAction)
                         .IsRequired();
 
                     b.HasOne("FactoryService.Api.Domain.Workstation", "Workstation")
                         .WithMany()
                         .HasForeignKey("WorkstationId")
-                        .OnDelete(DeleteBehavior.Cascade)
+                        .OnDelete(DeleteBehavior.NoAction)
                         .IsRequired();
 
                     b.Navigation("Operator");
@@ -743,7 +738,7 @@ namespace FactoryService.Api.Data.Migrations
                     b.HasOne("FactoryService.Api.Domain.Plant", "Plant")
                         .WithMany()
                         .HasForeignKey("PlantId")
-                        .OnDelete(DeleteBehavior.Cascade)
+                        .OnDelete(DeleteBehavior.NoAction)
                         .IsRequired();
 
                     b.Navigation("Plant");

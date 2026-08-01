@@ -5,7 +5,7 @@ namespace FactoryService.Common;
 
 public sealed record AgentConfig
 {
-    public string ApiBaseUrl { get; init; } = "http://localhost:5106";
+    public string ApiBaseUrl { get; init; } = "http://localhost:5000";
     public string AgentKey { get; init; } = "demo-agent-key";
     public string DeviceId { get; init; } = "demo-workstation";
     public string ComputerName { get; init; } = Environment.MachineName;

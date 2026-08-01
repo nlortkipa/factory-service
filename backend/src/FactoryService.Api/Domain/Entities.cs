@@ -42,7 +42,6 @@ public sealed class FactoryOperator
     public Guid Id { get; set; } = Guid.NewGuid();
     [MaxLength(160)] public required string AdUsername { get; set; }
     [MaxLength(200)] public required string DisplayName { get; set; }
-    [MaxLength(80)] public string PublicDisplayName { get; set; } = "";
     public Guid PlantId { get; set; }
     public Plant? Plant { get; set; }
     public Guid? WorkstationId { get; set; }

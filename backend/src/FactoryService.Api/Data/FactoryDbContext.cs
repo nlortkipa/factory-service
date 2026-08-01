@@ -47,6 +47,13 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
         modelBuilder.Entity<PortalSession>().HasIndex(x => x.TokenHash).IsUnique();
         modelBuilder.Entity<Rating>().HasIndex(x => new { x.SurveyResponseId, x.ServiceType }).IsUnique();
 
+        modelBuilder.Entity<Workstation>()
+            .HasOne(x => x.Plant).WithMany().HasForeignKey(x => x.PlantId)
+            .OnDelete(DeleteBehavior.NoAction);
+        modelBuilder.Entity<FactoryOperator>()
+            .HasOne(x => x.Plant).WithMany().HasForeignKey(x => x.PlantId)
+            .OnDelete(DeleteBehavior.NoAction);
+
         modelBuilder.Entity<Workstation>().Property(x => x.Status).HasConversion<string>();
         modelBuilder.Entity<QrSession>().Property(x => x.Status).HasConversion<string>();
         modelBuilder.Entity<Rating>().Property(x => x.ServiceType).HasConversion<string>();
@@ -54,7 +61,31 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
 
         modelBuilder.Entity<FactoryOperator>()
             .HasOne(x => x.Workstation).WithMany().HasForeignKey(x => x.WorkstationId)
-            .OnDelete(DeleteBehavior.SetNull);
+            .OnDelete(DeleteBehavior.NoAction);
+        modelBuilder.Entity<QrSession>()
+            .HasOne(x => x.Operator).WithMany().HasForeignKey(x => x.OperatorId)
+            .OnDelete(DeleteBehavior.NoAction);
+        modelBuilder.Entity<QrSession>()
+            .HasOne(x => x.Plant).WithMany().HasForeignKey(x => x.PlantId)
+            .OnDelete(DeleteBehavior.NoAction);
+        modelBuilder.Entity<QrSession>()
+            .HasOne(x => x.Workstation).WithMany().HasForeignKey(x => x.WorkstationId)
+            .OnDelete(DeleteBehavior.NoAction);
+        modelBuilder.Entity<SurveyResponse>()
+            .HasOne(x => x.Operator).WithMany().HasForeignKey(x => x.OperatorId)
+            .OnDelete(DeleteBehavior.NoAction);
+        modelBuilder.Entity<SurveyResponse>()
+            .HasOne(x => x.Plant).WithMany().HasForeignKey(x => x.PlantId)
+            .OnDelete(DeleteBehavior.NoAction);
+        modelBuilder.Entity<SurveyResponse>()
+            .HasOne(x => x.QrSession).WithMany().HasForeignKey(x => x.QrSessionId)
+            .OnDelete(DeleteBehavior.NoAction);
+        modelBuilder.Entity<SurveyResponse>()
+            .HasOne(x => x.RespondentDevice).WithMany().HasForeignKey(x => x.RespondentDeviceId)
+            .OnDelete(DeleteBehavior.NoAction);
+        modelBuilder.Entity<SurveyResponse>()
+            .HasOne(x => x.Workstation).WithMany().HasForeignKey(x => x.WorkstationId)
+            .OnDelete(DeleteBehavior.NoAction);
         modelBuilder.Entity<SurveyResponse>()
             .HasMany(x => x.Ratings).WithOne(x => x.SurveyResponse).HasForeignKey(x => x.SurveyResponseId)
             .OnDelete(DeleteBehavior.Cascade);

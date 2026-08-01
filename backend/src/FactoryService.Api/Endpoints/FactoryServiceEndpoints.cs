@@ -129,7 +129,7 @@ public static class FactoryServiceEndpoints
                 token,
                 surveyUrl = $"{PublicUrlResolver.Resolve(options.Value.PublicBaseUrl)}/s/{Uri.EscapeDataString(token)}",
                 expiresAt = session.ExpiresAt,
-                operatorName = string.IsNullOrWhiteSpace(factoryOperator.PublicDisplayName) ? factoryOperator.DisplayName : factoryOperator.PublicDisplayName,
+                operatorName = factoryOperator.DisplayName,
                 plantName = factoryOperator.Plant!.Name,
                 terminal = workstation.TerminalNumber
             });
@@ -179,7 +179,7 @@ public static class FactoryServiceEndpoints
             return Results.Ok(new
             {
                 sessionId = session.Id, plant = session.Plant!.Name,
-                operatorName = string.IsNullOrWhiteSpace(session.Operator!.PublicDisplayName) ? session.Operator.DisplayName : session.Operator.PublicDisplayName,
+                operatorName = session.Operator!.DisplayName,
                 terminal = session.Workstation!.TerminalNumber, surveyExpiresAt = session.SurveyExpiresAt,
                 blocked, nextAllowedAt = blocked ? next : null, privacyNotice = privacy
             });
@@ -220,7 +220,6 @@ public static class FactoryServiceEndpoints
                 db.RespondentDevices.Add(device);
             }
 
-            await using var transaction = await db.Database.BeginTransactionAsync();
             var response = new SurveyResponse
             {
                 QrSessionId = session.Id, RespondentDevice = device, SubmittedAt = now, PlantId = session.PlantId,
@@ -238,7 +237,7 @@ public static class FactoryServiceEndpoints
             }
             db.SurveyResponses.Add(response);
             session.Status = QrSessionStatus.Completed;
-            await db.SaveChangesAsync(); await transaction.CommitAsync();
+            await db.SaveChangesAsync();
             return Results.Ok(new { responseId = response.Id, duplicate = false, nextAllowedAt = now.AddDays(options.Value.RepeatWindowDays), message = "გმადლობთ შეფასებისთვის!" });
         });
     }
@@ -277,18 +276,18 @@ public static class FactoryServiceEndpoints
         {
             IQueryable<FactoryOperator> query = db.Operators.AsNoTracking().Include(x => x.Plant).Include(x => x.Workstation);
             if (user.PlantScope() is Guid scope) query = query.Where(x => x.PlantId == scope);
-            return Results.Ok(await query.OrderBy(x => x.DisplayName).Select(x => new { x.Id, x.AdUsername, x.DisplayName, x.PublicDisplayName, x.PlantId, PlantName = x.Plant!.Name, x.WorkstationId, Workstation = x.Workstation == null ? "" : x.Workstation.ComputerName, x.IsActive }).ToListAsync());
+            return Results.Ok(await query.OrderBy(x => x.DisplayName).Select(x => new { x.Id, x.AdUsername, x.DisplayName, x.PlantId, PlantName = x.Plant!.Name, x.WorkstationId, Workstation = x.Workstation == null ? "" : x.Workstation.ComputerName, x.IsActive }).ToListAsync());
         }).RequireAuthorization("Reports");
         group.MapPost("/operators", async (OperatorInput input, FactoryDbContext db, ClaimsPrincipal user, HttpContext context) =>
         {
             if (!CanAccessPlant(user, input.PlantId)) return Results.Forbid();
-            var entity = new FactoryOperator { AdUsername = input.AdUsername.Trim(), DisplayName = input.DisplayName.Trim(), PublicDisplayName = input.PublicDisplayName.Trim(), PlantId = input.PlantId, WorkstationId = input.WorkstationId, IsActive = input.IsActive };
+            var entity = new FactoryOperator { AdUsername = input.AdUsername.Trim(), DisplayName = input.DisplayName.Trim(), PlantId = input.PlantId, WorkstationId = input.WorkstationId, IsActive = input.IsActive };
             db.Operators.Add(entity); await db.SaveChangesAsync(); await AuditAsync(db, user.UserId(), "Create", "Operator", entity.Id.ToString(), "", JsonSerializer.Serialize(entity), context); return Results.Created($"/api/admin/operators/{entity.Id}", entity);
         }).RequireAuthorization("Manage");
         group.MapPut("/operators/{id:guid}", async (Guid id, OperatorInput input, FactoryDbContext db, ClaimsPrincipal user, HttpContext context) =>
         {
             FactoryOperator? entity = await db.Operators.FindAsync(id); if (entity is null) return Results.NotFound(); if (!CanAccessPlant(user, entity.PlantId) || !CanAccessPlant(user, input.PlantId)) return Results.Forbid(); string before = JsonSerializer.Serialize(entity);
-            entity.AdUsername = input.AdUsername.Trim(); entity.DisplayName = input.DisplayName.Trim(); entity.PublicDisplayName = input.PublicDisplayName.Trim(); entity.PlantId = input.PlantId; entity.WorkstationId = input.WorkstationId; entity.IsActive = input.IsActive;
+            entity.AdUsername = input.AdUsername.Trim(); entity.DisplayName = input.DisplayName.Trim(); entity.PlantId = input.PlantId; entity.WorkstationId = input.WorkstationId; entity.IsActive = input.IsActive;
             await db.SaveChangesAsync(); await AuditAsync(db, user.UserId(), "Update", "Operator", id.ToString(), before, JsonSerializer.Serialize(entity), context); return Results.Ok(entity);
         }).RequireAuthorization("Manage");
         group.MapDelete("/operators/{id:guid}", async (Guid id, FactoryDbContext db, ClaimsPrincipal user, HttpContext context) =>

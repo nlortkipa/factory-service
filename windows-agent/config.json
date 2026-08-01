@@ -1,9 +1,9 @@
 {
   "ApiBaseUrl": "http://localhost:5000",
-  "AgentKey": "demo-agent-key",
-  "DeviceId": "demo-workstation",
-  "ComputerName": "",
-  "WindowsUsernameOverride": "",
+  "AgentKey": "123456789",
+  "DeviceId": "123456789",
+  "ComputerName": "nikoloz-desktop",
+  "WindowsUsernameOverride": "nikoloz",
   "QrRefreshSeconds": 60,
   "HeartbeatSeconds": 60,
   "QrDisplaySeconds": 0,

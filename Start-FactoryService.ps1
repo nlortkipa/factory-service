@@ -53,7 +53,7 @@ function Save-StartedProcesses {
     }
 }
 
-if (-not (Test-Url -Uri "http://127.0.0.1:5106/health")) {
+if (-not (Test-Url -Uri "http://127.0.0.1:5000/health")) {
     $backendProject = Join-Path $WorkspaceRoot "backend\src\FactoryService.Api\FactoryService.Api.csproj"
     $backendArguments = "run --project `"$backendProject`" --launch-profile http"
     $backendProcess = Start-Process `
@@ -72,7 +72,7 @@ if (-not (Test-Url -Uri "http://127.0.0.1:5106/health")) {
     Save-StartedProcesses
 }
 
-Wait-ForUrl -Uri "http://127.0.0.1:5106/health" -Name "Backend"
+Wait-ForUrl -Uri "http://127.0.0.1:5000/health" -Name "Backend"
 
 if (-not (Test-Url -Uri "http://127.0.0.1:5173")) {
     $frontendDirectory = Join-Path $WorkspaceRoot "frontend"
@@ -121,7 +121,7 @@ if (-not $NoCompanion -and -not (Get-Process -Name "FactoryService.Companion" -E
 
 Write-Host "Factory Service is ready." -ForegroundColor Green
 Write-Host "Admin:  http://localhost:5173/admin"
-Write-Host "API:    http://localhost:5106/health"
+Write-Host "API:    http://localhost:5000/health"
 if (-not $NoCompanion) {
     Write-Host "QR display: running on this screen"
 }

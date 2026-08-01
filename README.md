@@ -42,7 +42,7 @@ After the password step, read the six-digit development MFA code from the backen
 ### Test from a phone on the same network
 
 The development setup listens on all network interfaces: Vite on port `5173` and
-the API on port `5106`. The backend automatically puts the active private LAN
+the API on port `5000`. The backend automatically puts the active private LAN
 IPv4 address in each QR link (rather than `localhost`), so scanning it opens the
 survey on a phone connected to the same Wi-Fi/Ethernet network. With the current
 network it will be `http://192.168.100.148:5173`.

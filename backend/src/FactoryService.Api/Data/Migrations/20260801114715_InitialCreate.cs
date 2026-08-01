@@ -146,7 +146,7 @@ namespace FactoryService.Api.Data.Migrations
                         column: x => x.PlantId,
                         principalTable: "Plants",
                         principalColumn: "Id",
-                        onDelete: ReferentialAction.Cascade);
+                        onDelete: ReferentialAction.NoAction);
                 });
 
             migrationBuilder.CreateTable(
@@ -218,13 +218,13 @@ namespace FactoryService.Api.Data.Migrations
                         column: x => x.PlantId,
                         principalTable: "Plants",
                         principalColumn: "Id",
-                        onDelete: ReferentialAction.Cascade);
+                        onDelete: ReferentialAction.NoAction);
                     table.ForeignKey(
                         name: "FK_Operators_Workstations_WorkstationId",
                         column: x => x.WorkstationId,
                         principalTable: "Workstations",
                         principalColumn: "Id",
-                        onDelete: ReferentialAction.SetNull);
+                        onDelete: ReferentialAction.NoAction);
                 });
 
             migrationBuilder.CreateTable(
@@ -252,19 +252,19 @@ namespace FactoryService.Api.Data.Migrations
                         column: x => x.OperatorId,
                         principalTable: "Operators",
                         principalColumn: "Id",
-                        onDelete: ReferentialAction.Cascade);
+                        onDelete: ReferentialAction.NoAction);
                     table.ForeignKey(
                         name: "FK_QrSessions_Plants_PlantId",
                         column: x => x.PlantId,
                         principalTable: "Plants",
                         principalColumn: "Id",
-                        onDelete: ReferentialAction.Cascade);
+                        onDelete: ReferentialAction.NoAction);
                     table.ForeignKey(
                         name: "FK_QrSessions_Workstations_WorkstationId",
                         column: x => x.WorkstationId,
                         principalTable: "Workstations",
                         principalColumn: "Id",
-                        onDelete: ReferentialAction.Cascade);
+                        onDelete: ReferentialAction.NoAction);
                 });
 
             migrationBuilder.CreateTable(
@@ -290,31 +290,31 @@ namespace FactoryService.Api.Data.Migrations
                         column: x => x.OperatorId,
                         principalTable: "Operators",
                         principalColumn: "Id",
-                        onDelete: ReferentialAction.Cascade);
+                        onDelete: ReferentialAction.NoAction);
                     table.ForeignKey(
                         name: "FK_SurveyResponses_Plants_PlantId",
                         column: x => x.PlantId,
                         principalTable: "Plants",
                         principalColumn: "Id",
-                        onDelete: ReferentialAction.Cascade);
+                        onDelete: ReferentialAction.NoAction);
                     table.ForeignKey(
                         name: "FK_SurveyResponses_QrSessions_QrSessionId",
                         column: x => x.QrSessionId,
                         principalTable: "QrSessions",
                         principalColumn: "Id",
-                        onDelete: ReferentialAction.Cascade);
+                        onDelete: ReferentialAction.NoAction);
                     table.ForeignKey(
                         name: "FK_SurveyResponses_RespondentDevices_RespondentDeviceId",
                         column: x => x.RespondentDeviceId,
                         principalTable: "RespondentDevices",
                         principalColumn: "Id",
-                        onDelete: ReferentialAction.Cascade);
+                        onDelete: ReferentialAction.NoAction);
                     table.ForeignKey(
                         name: "FK_SurveyResponses_Workstations_WorkstationId",
                         column: x => x.WorkstationId,
                         principalTable: "Workstations",
                         principalColumn: "Id",
-                        onDelete: ReferentialAction.Cascade);
+                        onDelete: ReferentialAction.NoAction);
                 });
 
             migrationBuilder.CreateTable(

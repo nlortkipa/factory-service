@@ -9,7 +9,7 @@ public sealed record AgentHeartbeatRequest(string DeviceId, string ComputerName,
 public sealed record RatingInput(ServiceType ServiceType, int Score, string? Comment);
 public sealed record SurveySubmitRequest(string IdempotencyKey, IReadOnlyList<RatingInput> Ratings);
 public sealed record PlantInput(string Code, string Name, string Address, string TimeZone, bool IsActive);
-public sealed record OperatorInput(string AdUsername, string DisplayName, string PublicDisplayName, Guid PlantId, Guid? WorkstationId, bool IsActive);
+public sealed record OperatorInput(string AdUsername, string DisplayName, Guid PlantId, Guid? WorkstationId, bool IsActive);
 public sealed record WorkstationInput(string DeviceId, string ComputerName, Guid PlantId, string TerminalNumber, string ScreenModel, string Serial, string AgentKey, bool IsActive);
 
 public sealed class FactoryOptions
