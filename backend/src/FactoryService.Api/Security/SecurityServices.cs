@@ -41,7 +41,7 @@ public static class SecureHash
     private static string Base64Url(byte[] bytes) => Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 }
 
-public sealed record QrTokenPayload(Guid SessionId, Guid OperatorId, Guid PlantId, Guid WorkstationId, long IssuedAt, long ExpiresAt, string Nonce);
+public sealed record QrTokenPayload(Guid SessionId, Guid OperatorId, Guid PlantId, long IssuedAt, long ExpiresAt, string Nonce);
 
 public sealed class QrTokenService(IOptions<FactoryOptions> options)
 {

@@ -34,7 +34,6 @@ if (await target.Plants.AnyAsync() || await target.SurveyResponses.AnyAsync())
 await using var transaction = await target.Database.BeginTransactionAsync();
 
 await CopyAsync(source.Plants, target.Plants);
-await CopyAsync(source.Workstations, target.Workstations);
 await CopyAsync(source.Operators, target.Operators);
 await CopyAsync(source.PortalUsers, target.PortalUsers);
 await CopyAsync(source.QrSessions, target.QrSessions);
@@ -51,7 +50,6 @@ await transaction.CommitAsync();
 
 Console.WriteLine("Migration completed.");
 Console.WriteLine($"Plants: {await target.Plants.CountAsync()}");
-Console.WriteLine($"Workstations: {await target.Workstations.CountAsync()}");
 Console.WriteLine($"Operators: {await target.Operators.CountAsync()}");
 Console.WriteLine($"Survey responses: {await target.SurveyResponses.CountAsync()}");
 Console.WriteLine($"Ratings: {await target.Ratings.CountAsync()}");

@@ -10,9 +10,7 @@ internal sealed class CompanionApplicationContext : ApplicationContext
     private readonly NotifyIcon _trayIcon;
     private readonly Control _uiDispatcher;
     private readonly System.Windows.Forms.Timer _refreshTimer;
-    private QrDisplayForm? _qrForm;
     private bool _refreshing;
-    private DateTimeOffset? _lastRenderAt;
 
     public CompanionApplicationContext()
     {
@@ -21,64 +19,56 @@ internal sealed class CompanionApplicationContext : ApplicationContext
         _api = new AgentApiClient(_config);
 
         var menu = new ContextMenuStrip();
-        menu.Items.Add("Refresh QR", null, async (_, _) => await RefreshQrAsync(forceShow: true));
+        menu.Items.Add("Refresh Turmo QR", null, async (_, _) => await RefreshQrAsync());
         menu.Items.Add("Open survey in browser", null, async (_, _) => await OpenSurveyAsync());
         menu.Items.Add("Exit", null, (_, _) => ExitThread());
         _trayIcon = new NotifyIcon { Icon = SystemIcons.Application, Text = "Kartuli Cement — შეფასება", ContextMenuStrip = menu, Visible = true };
-        _trayIcon.DoubleClick += async (_, _) => await RefreshQrAsync(forceShow: true);
+        _trayIcon.DoubleClick += async (_, _) => await RefreshQrAsync();
 
         _uiDispatcher = new Control(); _uiDispatcher.CreateControl();
-        _refreshTimer = new System.Windows.Forms.Timer { Interval = Math.Max(15, _config.QrRefreshSeconds) * 1000 };
-        _refreshTimer.Tick += async (_, _) => await RefreshQrAsync(forceShow: _qrForm is { IsDisposed: false });
+        _refreshTimer = new System.Windows.Forms.Timer { Interval = 60 * 1000 };
+        _refreshTimer.Tick += async (_, _) => await RefreshQrAsync();
         _refreshTimer.Start();
 
         SystemEvents.SessionSwitch += OnSessionSwitch;
         Application.Idle += ShowInitialQr;
-        AgentLog.User($"companion started; user={_config.EffectiveWindowsUsername}; config={AgentConfigStore.ConfigPath}");
+        AgentLog.User($"companion started; operator={_config.OperatorId}; config={AgentConfigStore.ConfigPath}");
     }
 
     private async void ShowInitialQr(object? sender, EventArgs eventArgs)
     {
         Application.Idle -= ShowInitialQr;
-        await RefreshQrAsync(forceShow: true);
+        await RefreshQrAsync();
     }
 
     private async void OnSessionSwitch(object sender, SessionSwitchEventArgs eventArgs)
     {
         AgentLog.User($"session switch; reason={eventArgs.Reason}");
         if (eventArgs.Reason is SessionSwitchReason.SessionUnlock or SessionSwitchReason.SessionLogon or SessionSwitchReason.RemoteConnect)
-            await RefreshQrAsync(forceShow: true);
-        else if (eventArgs.Reason is SessionSwitchReason.SessionLock or SessionSwitchReason.SessionLogoff or SessionSwitchReason.RemoteDisconnect)
-            _qrForm?.Close();
+            await RefreshQrAsync();
     }
 
-    private async Task RefreshQrAsync(bool forceShow)
+    private async Task RefreshQrAsync()
     {
         if (_refreshing) return; _refreshing = true;
         try
         {
             AgentQrResponse response = await _api.RequestQrAsync();
-            _lastRenderAt = DateTimeOffset.UtcNow;
-            await _api.SendHeartbeatAsync("Online", null, _lastRenderAt);
-            if (forceShow)
-            {
-                _qrForm?.Close(); _qrForm = new QrDisplayForm(_config, response);
-                _qrForm.FormClosed += (_, _) => _qrForm = null; _qrForm.Show(); _qrForm.Activate();
-            }
-            AgentLog.User($"QR refreshed; expires={response.ExpiresAt:O}; operator={response.OperatorName}");
+            await TurmoPanelDisplay.ShowQrAsync(response);
+            AgentLog.User($"Turmo QR refreshed; expires={response.ExpiresAt:O}; operator={response.OperatorName}");
         }
         catch (Exception exception)
         {
-            string? code = (exception as AgentApiException)?.Code;
-            try { await _api.SendHeartbeatAsync("Warning", code ?? "API_UNAVAILABLE", _lastRenderAt); } catch { }
-            AgentLog.User($"QR refresh failed: {exception}");
-            if (forceShow)
+            AgentLog.User($"Turmo QR refresh failed: {exception}");
+            if (exception is not TurmoPanelException)
             {
                 string detail = exception is AgentApiException apiException && !string.IsNullOrWhiteSpace(apiException.HelpdeskReference)
                     ? $"{apiException.Message}\n{apiException.HelpdeskReference}" : "სერვერთან კავშირი ვერ დამყარდა";
-                _qrForm?.Close(); _qrForm = new QrDisplayForm(_config, null, detail);
-                _qrForm.FormClosed += (_, _) => _qrForm = null; _qrForm.Show(); _qrForm.Activate();
+                try { await TurmoPanelDisplay.ShowUnavailableAsync(detail); }
+                catch (Exception panelException) { AgentLog.User($"Turmo unavailable screen failed: {panelException}"); }
             }
+
+            _trayIcon.ShowBalloonTip(5000, "Factory Service", exception.Message, ToolTipIcon.Warning);
         }
         finally { _refreshing = false; }
     }
@@ -96,7 +86,7 @@ internal sealed class CompanionApplicationContext : ApplicationContext
     protected override void ExitThreadCore()
     {
         SystemEvents.SessionSwitch -= OnSessionSwitch; _refreshTimer.Stop(); _refreshTimer.Dispose();
-        _trayIcon.Visible = false; _trayIcon.Dispose(); _uiDispatcher.Dispose(); _qrForm?.Close(); _api.Dispose();
+        _trayIcon.Visible = false; _trayIcon.Dispose(); _uiDispatcher.Dispose(); _api.Dispose();
         AgentLog.User("companion stopped"); base.ExitThreadCore();
     }
 }

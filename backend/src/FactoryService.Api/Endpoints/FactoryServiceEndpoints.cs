@@ -92,37 +92,27 @@ public static class FactoryServiceEndpoints
 
     private static void MapAgent(RouteGroupBuilder group)
     {
-        group.MapPost("/qr", async (AgentQrRequest request, HttpRequest httpRequest, FactoryDbContext db, QrTokenService tokens, IOptions<FactoryOptions> options) =>
+        group.MapPost("/qr", async (AgentQrRequest request, FactoryDbContext db, QrTokenService tokens, IOptions<FactoryOptions> options) =>
         {
-            Workstation? workstation = await AuthenticateAgentAsync(request.DeviceId, httpRequest, db);
-            if (workstation is null || !workstation.IsActive) return Results.Unauthorized();
-            string user = request.WindowsUsername.Trim().ToLowerInvariant();
+            string operatorId = request.OperatorId?.Trim() ?? "";
+            if (operatorId.Length is 0 or > 64)
+                return Results.BadRequest(new { code = "INVALID_OPERATOR_ID", message = "Operator ID is required." });
             FactoryOperator? factoryOperator = await db.Operators.Include(x => x.Plant)
-                .SingleOrDefaultAsync(x => x.IsActive && x.AdUsername.ToLower() == user && x.PlantId == workstation.PlantId);
-
-            workstation.ActiveWindowsUser = request.WindowsUsername;
-            workstation.ClientVersion = request.ClientVersion;
-            workstation.LastSeen = DateTimeOffset.UtcNow;
-            workstation.Status = factoryOperator is null ? WorkstationStatus.Warning : WorkstationStatus.Online;
-            workstation.LastErrorCode = factoryOperator is null ? "OPERATOR_NOT_MAPPED" : "";
+                .SingleOrDefaultAsync(x => x.OperatorId == operatorId);
             if (factoryOperator is null)
-            {
-                await db.SaveChangesAsync();
-                return Results.NotFound(new { code = "OPERATOR_NOT_MAPPED", message = "შეფასება დროებით მიუწვდომელია", helpdeskReference = $"USR-{workstation.Id.ToString()[..8].ToUpperInvariant()}" });
-            }
+                return Results.NotFound(new { code = "OPERATOR_NOT_FOUND", message = "ოპერატორი ვერ მოიძებნა." });
 
             DateTimeOffset now = DateTimeOffset.UtcNow;
             var session = new QrSession
             {
-                OperatorId = factoryOperator.Id, PlantId = factoryOperator.PlantId, WorkstationId = workstation.Id,
+                OperatorId = factoryOperator.Id, PlantId = factoryOperator.PlantId,
                 IssuedAt = now, ExpiresAt = now.AddMinutes(options.Value.QrLifetimeMinutes), Nonce = SecureHash.RandomToken(16),
-                TokenHash = "pending", IsTest = request.IsTest
+                TokenHash = "pending"
             };
-            string token = tokens.Create(new QrTokenPayload(session.Id, session.OperatorId, session.PlantId, session.WorkstationId,
+            string token = tokens.Create(new QrTokenPayload(session.Id, session.OperatorId, session.PlantId,
                 now.ToUnixTimeSeconds(), session.ExpiresAt.ToUnixTimeSeconds(), session.Nonce));
             session.TokenHash = SecureHash.Sha256(token);
             db.QrSessions.Add(session);
-            workstation.LastQrRenderedAt = now;
             await db.SaveChangesAsync();
             return Results.Ok(new
             {
@@ -130,24 +120,8 @@ public static class FactoryServiceEndpoints
                 surveyUrl = $"{PublicUrlResolver.Resolve(options.Value.PublicBaseUrl)}/s/{Uri.EscapeDataString(token)}",
                 expiresAt = session.ExpiresAt,
                 operatorName = factoryOperator.DisplayName,
-                plantName = factoryOperator.Plant!.Name,
-                terminal = workstation.TerminalNumber
+                plantName = factoryOperator.Plant!.Name
             });
-        });
-
-        group.MapPost("/heartbeat", async (AgentHeartbeatRequest request, HttpRequest httpRequest, FactoryDbContext db) =>
-        {
-            Workstation? workstation = await AuthenticateAgentAsync(request.DeviceId, httpRequest, db);
-            if (workstation is null) return Results.Unauthorized();
-            workstation.ComputerName = request.ComputerName;
-            workstation.ActiveWindowsUser = request.WindowsUsername;
-            workstation.ClientVersion = request.ClientVersion;
-            workstation.LastSeen = DateTimeOffset.UtcNow;
-            workstation.LastQrRenderedAt = request.LastRenderAt;
-            workstation.LastErrorCode = request.ErrorCode ?? "";
-            workstation.Status = Enum.TryParse(request.Status, true, out WorkstationStatus status) ? status : WorkstationStatus.Warning;
-            await db.SaveChangesAsync();
-            return Results.Ok(new { nextHeartbeatSeconds = 60 });
         });
     }
 
@@ -157,7 +131,7 @@ public static class FactoryServiceEndpoints
         {
             if (!tokenService.TryValidate(token, out QrTokenPayload? payload) || payload is null)
                 return Results.BadRequest(new { code = "QR_EXPIRED", message = "QR კოდს ვადა გაუვიდა. გთხოვთ თავიდან დაასკანეროთ ეკრანი." });
-            QrSession? session = await db.QrSessions.Include(x => x.Operator).Include(x => x.Plant).Include(x => x.Workstation)
+            QrSession? session = await db.QrSessions.Include(x => x.Operator).Include(x => x.Plant)
                 .SingleOrDefaultAsync(x => x.Id == payload.SessionId && x.TokenHash == SecureHash.Sha256(token));
             if (session is null || session.Status is QrSessionStatus.Revoked or QrSessionStatus.Expired)
                 return Results.BadRequest(new { code = "QR_INVALID", message = "QR კოდი აღარ არის მოქმედი." });
@@ -180,7 +154,7 @@ public static class FactoryServiceEndpoints
             {
                 sessionId = session.Id, plant = session.Plant!.Name,
                 operatorName = session.Operator!.DisplayName,
-                terminal = session.Workstation!.TerminalNumber, surveyExpiresAt = session.SurveyExpiresAt,
+                surveyExpiresAt = session.SurveyExpiresAt,
                 blocked, nextAllowedAt = blocked ? next : null, privacyNotice = privacy
             });
         });
@@ -223,7 +197,7 @@ public static class FactoryServiceEndpoints
             var response = new SurveyResponse
             {
                 QrSessionId = session.Id, RespondentDevice = device, SubmittedAt = now, PlantId = session.PlantId,
-                OperatorId = session.OperatorId, WorkstationId = session.WorkstationId,
+                OperatorId = session.OperatorId,
                 IdempotencyKey = request.IdempotencyKey, IsTest = session.IsTest
             };
             foreach (RatingInput rating in request.Ratings)
@@ -252,75 +226,60 @@ public static class FactoryServiceEndpoints
         {
             IQueryable<Plant> query = db.Plants.AsNoTracking();
             if (user.PlantScope() is Guid scope) query = query.Where(x => x.Id == scope);
-            return Results.Ok(await query.OrderBy(x => x.Name).ToListAsync());
+            return Results.Ok(await query.OrderBy(x => x.Name).Select(x => new { x.Id, x.Name, x.Address, x.TimeZone }).ToListAsync());
         }).RequireAuthorization("Reports");
         group.MapPost("/plants", async (PlantInput input, FactoryDbContext db, ClaimsPrincipal user, HttpContext context) =>
         {
             if (!user.IsSystemAdmin()) return Results.Forbid();
-            var entity = new Plant { Code = input.Code.Trim(), Name = input.Name.Trim(), Address = input.Address.Trim(), TimeZone = input.TimeZone.Trim(), IsActive = input.IsActive };
+            var entity = new Plant { Name = input.Name.Trim(), Address = input.Address.Trim(), TimeZone = input.TimeZone.Trim() };
             db.Plants.Add(entity); await db.SaveChangesAsync(); await AuditAsync(db, user.UserId(), "Create", "Plant", entity.Id.ToString(), "", JsonSerializer.Serialize(entity), context); return Results.Created($"/api/admin/plants/{entity.Id}", entity);
         }).RequireAuthorization("Manage");
         group.MapPut("/plants/{id:guid}", async (Guid id, PlantInput input, FactoryDbContext db, ClaimsPrincipal user, HttpContext context) =>
         {
             Plant? entity = await db.Plants.FindAsync(id); if (entity is null) return Results.NotFound(); if (!user.IsSystemAdmin() && user.PlantScope() != id) return Results.Forbid(); string before = JsonSerializer.Serialize(entity);
-            entity.Code = input.Code.Trim(); entity.Name = input.Name.Trim(); entity.Address = input.Address.Trim(); entity.TimeZone = input.TimeZone.Trim(); entity.IsActive = input.IsActive;
+            entity.Name = input.Name.Trim(); entity.Address = input.Address.Trim(); entity.TimeZone = input.TimeZone.Trim();
             await db.SaveChangesAsync(); await AuditAsync(db, user.UserId(), "Update", "Plant", id.ToString(), before, JsonSerializer.Serialize(entity), context); return Results.Ok(entity);
         }).RequireAuthorization("Manage");
         group.MapDelete("/plants/{id:guid}", async (Guid id, FactoryDbContext db, ClaimsPrincipal user, HttpContext context) =>
         {
             if (!user.IsSystemAdmin()) return Results.Forbid(); Plant? entity = await db.Plants.FindAsync(id); if (entity is null) return Results.NotFound();
-            entity.IsActive = false; await db.SaveChangesAsync(); await AuditAsync(db, user.UserId(), "Deactivate", "Plant", id.ToString(), "active", "inactive", context); return Results.NoContent();
+            bool isUsed = await db.Operators.AnyAsync(x => x.PlantId == id)
+                || await db.QrSessions.AnyAsync(x => x.PlantId == id)
+                || await db.SurveyResponses.AnyAsync(x => x.PlantId == id)
+                || await db.Ratings.AnyAsync(x => x.PlantId == id)
+                || await db.PortalUsers.AnyAsync(x => x.PlantId == id);
+            if (isUsed) return Results.Conflict(new { message = "ქარხანა დაკავშირებულია სხვა ჩანაწერებთან და ვერ წაიშლება." });
+            string before = JsonSerializer.Serialize(entity); db.Plants.Remove(entity); await db.SaveChangesAsync();
+            await AuditAsync(db, user.UserId(), "Delete", "Plant", id.ToString(), before, "", context); return Results.NoContent();
         }).RequireAuthorization("Manage");
 
         group.MapGet("/operators", async (FactoryDbContext db, ClaimsPrincipal user) =>
         {
-            IQueryable<FactoryOperator> query = db.Operators.AsNoTracking().Include(x => x.Plant).Include(x => x.Workstation);
+            IQueryable<FactoryOperator> query = db.Operators.AsNoTracking().Include(x => x.Plant);
             if (user.PlantScope() is Guid scope) query = query.Where(x => x.PlantId == scope);
-            return Results.Ok(await query.OrderBy(x => x.DisplayName).Select(x => new { x.Id, x.AdUsername, x.DisplayName, x.PlantId, PlantName = x.Plant!.Name, x.WorkstationId, Workstation = x.Workstation == null ? "" : x.Workstation.ComputerName, x.IsActive }).ToListAsync());
+            return Results.Ok(await query.OrderBy(x => x.DisplayName).Select(x => new { x.Id, x.OperatorId, x.DisplayName, x.PlantId, PlantName = x.Plant!.Name }).ToListAsync());
         }).RequireAuthorization("Reports");
         group.MapPost("/operators", async (OperatorInput input, FactoryDbContext db, ClaimsPrincipal user, HttpContext context) =>
         {
             if (!CanAccessPlant(user, input.PlantId)) return Results.Forbid();
-            var entity = new FactoryOperator { AdUsername = input.AdUsername.Trim(), DisplayName = input.DisplayName.Trim(), PlantId = input.PlantId, WorkstationId = input.WorkstationId, IsActive = input.IsActive };
+            var entity = new FactoryOperator { OperatorId = SecureHash.RandomToken(24), DisplayName = input.DisplayName.Trim(), PlantId = input.PlantId };
             db.Operators.Add(entity); await db.SaveChangesAsync(); await AuditAsync(db, user.UserId(), "Create", "Operator", entity.Id.ToString(), "", JsonSerializer.Serialize(entity), context); return Results.Created($"/api/admin/operators/{entity.Id}", entity);
         }).RequireAuthorization("Manage");
         group.MapPut("/operators/{id:guid}", async (Guid id, OperatorInput input, FactoryDbContext db, ClaimsPrincipal user, HttpContext context) =>
         {
             FactoryOperator? entity = await db.Operators.FindAsync(id); if (entity is null) return Results.NotFound(); if (!CanAccessPlant(user, entity.PlantId) || !CanAccessPlant(user, input.PlantId)) return Results.Forbid(); string before = JsonSerializer.Serialize(entity);
-            entity.AdUsername = input.AdUsername.Trim(); entity.DisplayName = input.DisplayName.Trim(); entity.PlantId = input.PlantId; entity.WorkstationId = input.WorkstationId; entity.IsActive = input.IsActive;
+            entity.DisplayName = input.DisplayName.Trim(); entity.PlantId = input.PlantId;
             await db.SaveChangesAsync(); await AuditAsync(db, user.UserId(), "Update", "Operator", id.ToString(), before, JsonSerializer.Serialize(entity), context); return Results.Ok(entity);
         }).RequireAuthorization("Manage");
         group.MapDelete("/operators/{id:guid}", async (Guid id, FactoryDbContext db, ClaimsPrincipal user, HttpContext context) =>
         {
             FactoryOperator? entity = await db.Operators.FindAsync(id); if (entity is null) return Results.NotFound(); if (!CanAccessPlant(user, entity.PlantId)) return Results.Forbid();
-            entity.IsActive = false; entity.EffectiveTo = DateTimeOffset.UtcNow; await db.SaveChangesAsync(); await AuditAsync(db, user.UserId(), "Deactivate", "Operator", id.ToString(), "active", "inactive", context); return Results.NoContent();
-        }).RequireAuthorization("Manage");
-
-        group.MapGet("/workstations", async (FactoryDbContext db, ClaimsPrincipal user) =>
-        {
-            IQueryable<Workstation> query = db.Workstations.AsNoTracking().Include(x => x.Plant);
-            if (user.PlantScope() is Guid scope) query = query.Where(x => x.PlantId == scope);
-            DateTimeOffset now = DateTimeOffset.UtcNow;
-            var items = await query.OrderBy(x => x.ComputerName).ToListAsync();
-            return Results.Ok(items.Select(x => new { x.Id, x.DeviceId, x.ComputerName, x.PlantId, PlantName = x.Plant!.Name, x.TerminalNumber, x.ScreenModel, x.Serial, x.ClientVersion, x.ActiveWindowsUser, x.LastSeen, x.LastQrRenderedAt, Status = EffectiveStatus(x, now), x.LastErrorCode, x.IsActive }));
-        }).RequireAuthorization("Reports");
-        group.MapPost("/workstations", async (WorkstationInput input, FactoryDbContext db, ClaimsPrincipal user, HttpContext context) =>
-        {
-            if (!CanAccessPlant(user, input.PlantId)) return Results.Forbid();
-            var entity = new Workstation { DeviceId = input.DeviceId.Trim(), ComputerName = input.ComputerName.Trim(), PlantId = input.PlantId, TerminalNumber = input.TerminalNumber.Trim(), ScreenModel = input.ScreenModel.Trim(), Serial = input.Serial.Trim(), AgentKeyHash = SecureHash.Sha256(input.AgentKey), IsActive = input.IsActive };
-            db.Workstations.Add(entity); await db.SaveChangesAsync(); await AuditAsync(db, user.UserId(), "Create", "Workstation", entity.Id.ToString(), "", "created", context); return Results.Created($"/api/admin/workstations/{entity.Id}", new { entity.Id });
-        }).RequireAuthorization("Manage");
-        group.MapPut("/workstations/{id:guid}", async (Guid id, WorkstationInput input, FactoryDbContext db, ClaimsPrincipal user, HttpContext context) =>
-        {
-            Workstation? entity = await db.Workstations.FindAsync(id); if (entity is null) return Results.NotFound(); if (!CanAccessPlant(user, entity.PlantId) || !CanAccessPlant(user, input.PlantId)) return Results.Forbid();
-            entity.DeviceId = input.DeviceId.Trim(); entity.ComputerName = input.ComputerName.Trim(); entity.PlantId = input.PlantId; entity.TerminalNumber = input.TerminalNumber.Trim(); entity.ScreenModel = input.ScreenModel.Trim(); entity.Serial = input.Serial.Trim(); entity.IsActive = input.IsActive; if (!string.IsNullOrWhiteSpace(input.AgentKey)) entity.AgentKeyHash = SecureHash.Sha256(input.AgentKey);
-            await db.SaveChangesAsync(); await AuditAsync(db, user.UserId(), "Update", "Workstation", id.ToString(), "", "updated", context); return Results.Ok(new { entity.Id });
-        }).RequireAuthorization("Manage");
-        group.MapDelete("/workstations/{id:guid}", async (Guid id, FactoryDbContext db, ClaimsPrincipal user, HttpContext context) =>
-        {
-            Workstation? entity = await db.Workstations.FindAsync(id); if (entity is null) return Results.NotFound(); if (!CanAccessPlant(user, entity.PlantId)) return Results.Forbid();
-            entity.IsActive = false; entity.Status = WorkstationStatus.Offline; await db.QrSessions.Where(x => x.WorkstationId == id && x.Status == QrSessionStatus.Active).ExecuteUpdateAsync(setters => setters.SetProperty(x => x.Status, QrSessionStatus.Revoked));
-            await db.SaveChangesAsync(); await AuditAsync(db, user.UserId(), "Deactivate", "Workstation", id.ToString(), "active", "inactive", context); return Results.NoContent();
+            bool isUsed = await db.QrSessions.AnyAsync(x => x.OperatorId == id)
+                || await db.SurveyResponses.AnyAsync(x => x.OperatorId == id)
+                || await db.Ratings.AnyAsync(x => x.OperatorId == id);
+            if (isUsed) return Results.Conflict(new { message = "ოპერატორი დაკავშირებულია შეფასებებთან და ვერ წაიშლება." });
+            string before = JsonSerializer.Serialize(entity); db.Operators.Remove(entity); await db.SaveChangesAsync();
+            await AuditAsync(db, user.UserId(), "Delete", "Operator", id.ToString(), before, "", context); return Results.NoContent();
         }).RequireAuthorization("Manage");
 
         group.MapGet("/settings", async (FactoryDbContext db) => Results.Ok(await db.Settings.AsNoTracking().ToDictionaryAsync(x => x.Key, x => x.Value))).RequireAuthorization("SystemAdmin");
@@ -353,10 +312,8 @@ public static class FactoryServiceEndpoints
         object Metric(ServiceType type) { var values = ratings.Where(x => x.ServiceType == type).ToList(); return new { average = values.Count == 0 ? 0 : Math.Round(values.Average(x => x.Score), 2), count = values.Count, lowPercent = values.Count == 0 ? 0 : Math.Round(values.Count(x => x.Score <= 2) * 100d / values.Count, 1), distribution = Enumerable.Range(1, 5).Select(score => new { score, count = values.Count(x => x.Score == score) }) }; }
         var trend = responses.GroupBy(x => DateOnly.FromDateTime(x.SubmittedAt.LocalDateTime.Date)).OrderBy(x => x.Key).Select(g => new { date = g.Key, average = Math.Round(g.SelectMany(x => x.Ratings).Average(x => x.Score), 2), count = g.Count() });
         var plants = responses.GroupBy(x => new { x.PlantId, x.Plant!.Name }).Select(g => new { id = g.Key.PlantId, name = g.Key.Name, average = Math.Round(g.SelectMany(x => x.Ratings).Average(x => x.Score), 2), count = g.Count() }).OrderByDescending(x => x.average);
-        DateTimeOffset now = DateTimeOffset.UtcNow; var workstations = await db.Workstations.AsNoTracking().ToListAsync();
-        var health = Enum.GetValues<WorkstationStatus>().Select(status => new { status, count = workstations.Count(x => EffectiveStatus(x, now) == status) });
         int blocked = await db.RateLimitDecisions.CountAsync(x => x.Decision == "Blocked" && x.WindowStart >= start);
-        return Results.Ok(new { total, uniqueDevices, sales = Metric(ServiceType.Sales), scale = Metric(ServiceType.Scale), loading = Metric(ServiceType.Loading), trend, plants, health, blockedAttempts = blocked });
+        return Results.Ok(new { total, uniqueDevices, sales = Metric(ServiceType.Sales), scale = Metric(ServiceType.Scale), loading = Metric(ServiceType.Loading), trend, plants, blockedAttempts = blocked });
     }
 
     private static async Task<IResult> ResponsesAsync(FactoryDbContext db, ClaimsPrincipal user, DateTimeOffset? from, DateTimeOffset? to, Guid? plantId, Guid? operatorId, ServiceType? serviceType, int? score, string? search, int page = 1, int pageSize = 50)
@@ -364,14 +321,14 @@ public static class FactoryServiceEndpoints
         IQueryable<Rating> query = BuildReportQuery(db, user, from, to, plantId, operatorId, serviceType, score, search);
         int total = await query.CountAsync();
         var items = await query.OrderByDescending(x => x.SurveyResponse!.SubmittedAt).Skip((Math.Max(1, page) - 1) * Math.Clamp(pageSize, 1, 200)).Take(Math.Clamp(pageSize, 1, 200))
-            .Select(x => new { x.Id, x.SurveyResponse!.SubmittedAt, Plant = x.SurveyResponse.Plant!.Name, Operator = x.SurveyResponse.Operator!.DisplayName, Workstation = x.SurveyResponse.Workstation!.ComputerName, x.ServiceType, x.Score, x.Comment }).ToListAsync();
+            .Select(x => new { x.Id, x.SurveyResponse!.SubmittedAt, Plant = x.SurveyResponse.Plant!.Name, Operator = x.SurveyResponse.Operator!.DisplayName, x.ServiceType, x.Score, x.Comment }).ToListAsync();
         return Results.Ok(new { total, page = Math.Max(1, page), pageSize = Math.Clamp(pageSize, 1, 200), items });
     }
 
     private static async Task<IResult> ExportAsync(string format, FactoryDbContext db, ClaimsPrincipal user, HttpContext context, DateTimeOffset? from, DateTimeOffset? to, Guid? plantId, Guid? operatorId, ServiceType? serviceType, int? score, string? search)
     {
         var rows = await BuildReportQuery(db, user, from, to, plantId, operatorId, serviceType, score, search).OrderByDescending(x => x.SurveyResponse!.SubmittedAt)
-            .Select(x => new ReportRow(x.SurveyResponse!.SubmittedAt, x.SurveyResponse.Plant!.Name, x.SurveyResponse.Operator!.DisplayName, x.SurveyResponse.Workstation!.ComputerName, x.ServiceType, x.Score, x.Comment)).ToListAsync();
+            .Select(x => new ReportRow(x.SurveyResponse!.SubmittedAt, x.SurveyResponse.Plant!.Name, x.SurveyResponse.Operator!.DisplayName, x.ServiceType, x.Score, x.Comment)).ToListAsync();
         byte[] bytes; string contentType; string extension;
         switch (format.ToLowerInvariant())
         {
@@ -396,13 +353,6 @@ public static class FactoryServiceEndpoints
         return query;
     }
 
-    private static async Task<Workstation?> AuthenticateAgentAsync(string deviceId, HttpRequest request, FactoryDbContext db)
-    {
-        string key = request.Headers["X-Agent-Key"].ToString(); if (string.IsNullOrWhiteSpace(key)) return null;
-        Workstation? workstation = await db.Workstations.SingleOrDefaultAsync(x => x.DeviceId == deviceId);
-        return workstation is not null && SecureHash.FixedEquals(workstation.AgentKeyHash, SecureHash.Sha256(key)) ? workstation : null;
-    }
-
     private static string GetOrSetDeviceToken(HttpContext context, bool secure)
     {
         const string name = "fs_device";
@@ -415,7 +365,6 @@ public static class FactoryServiceEndpoints
     private static string CleanComment(string? value) => Regex.Replace(value?.Trim() ?? "", "<[^>]+>", "").Replace("javascript:", "", StringComparison.OrdinalIgnoreCase);
     private static string MaskPhone(string phone) => phone.Length < 7 ? "***" : $"{phone[..4]}•••{phone[^3..]}";
     private static bool CanAccessPlant(ClaimsPrincipal user, Guid plantId) => user.IsSystemAdmin() || user.PlantScope() == plantId;
-    private static WorkstationStatus EffectiveStatus(Workstation workstation, DateTimeOffset now) => workstation.LastSeen is null || now - workstation.LastSeen > TimeSpan.FromMinutes(15) ? WorkstationStatus.Offline : now - workstation.LastSeen > TimeSpan.FromMinutes(5) ? WorkstationStatus.Warning : workstation.Status;
     private static object UserDto(PortalUser user) => new { user.Id, user.Username, user.DisplayName, role = user.Role, user.PlantId, plant = user.Plant?.Name };
 
     private static async Task AuditAsync(FactoryDbContext db, Guid? actorId, string action, string objectType, string objectId, string before, string after, HttpContext context)

@@ -25,7 +25,7 @@ internal sealed class FactoryWindowsService : ServiceBase
             AgentConfig config = AgentConfigStore.EnsureExists();
             AgentLog.Machine(
                 $"service started; machine={Environment.MachineName}; " +
-                $"api={config.ApiBaseUrl}; device={config.DeviceId}; config={AgentConfigStore.ConfigPath}");
+                $"api={config.ApiBaseUrl}; operator={config.OperatorId}; config={AgentConfigStore.ConfigPath}");
         }
         catch (Exception exception)
         {

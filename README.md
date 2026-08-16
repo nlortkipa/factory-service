@@ -4,17 +4,17 @@ End-to-end implementation of the Georgian technical specification:
 
 - `backend/` — ASP.NET Core .NET 10 API with Entity Framework Core, SQL Server production configuration, SQLite development profile, signed QR sessions, direct public surveys, MFA, RBAC, audit, reports, and exports.
 - `frontend/` — responsive React/Vite public survey and administration portal matching the green/navy UI concepts in the specification.
-- `windows-agent/` — .NET 10 Windows Service plus interactive tray companion. The companion requests short-lived QR sessions and shows the LCD design on the Windows screen.
+- `windows-agent/` — .NET 10 Windows Service plus tray companion. The companion requests short-lived QR sessions and sends the QR design directly to the 320×480 Turmo USB panel on COM3.
 
 ## Local development
 
-Start the API, React frontend, and on-screen QR companion together:
+Start the API, React frontend, and Turmo QR companion together:
 
 ```powershell
 .\Start-FactoryService.ps1
 ```
 
-The command waits for both web applications to become ready before opening the QR display. Background output is saved under `.dev/`. To stop the API and frontend processes started by this command:
+The command waits for both web applications to become ready before sending the QR display to the Turmo panel. Background output is saved under `.dev/`. To stop the API and frontend processes started by this command:
 
 ```powershell
 .\Stop-FactoryService.ps1
@@ -52,13 +52,13 @@ network firewall. Do not use the HTTPS development profile URL on a phone: its
 local development certificate is only trusted by this PC. Re-scan the QR after a
 network change; the next QR uses the new LAN address automatically.
 
-Run the interactive Windows QR display after the backend is ready:
+Run the Turmo QR companion after the backend is ready:
 
 ```powershell
 dotnet run --project .\windows-agent\src\FactoryService.Companion
 ```
 
-The source-local agent configuration is [`windows-agent/config.json`](./windows-agent/config.json). It is copied beside both executables during build/publish and is never written to AppData or ProgramData.
+The source-local agent configuration is [`windows-agent/config.json`](./windows-agent/config.json). It contains only `apiBaseUrl` and `operatorId`, is copied beside both executables during build/publish, and is never written to AppData or ProgramData. Create an operator in the administration portal and copy its generated Operator ID into the configuration before starting the companion.
 
 ## Production database
 

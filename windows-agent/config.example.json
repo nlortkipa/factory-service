@@ -1,12 +1,4 @@
 {
-  "ApiBaseUrl": "https://factory-service.example.ge",
-  "AgentKey": "PROVISIONED-WORKSTATION-SECRET",
-  "DeviceId": "PC-NAME-OR-PROVISIONED-ID",
-  "ComputerName": "",
-  "WindowsUsernameOverride": "",
-  "QrRefreshSeconds": 60,
-  "HeartbeatSeconds": 60,
-  "QrDisplaySeconds": 0,
-  "QrTopMost": true,
-  "TestMode": false
+  "apiBaseUrl": "https://factory-service.example.ge",
+  "operatorId": "COPY-FROM-THE-OPERATOR-RECORD"
 }

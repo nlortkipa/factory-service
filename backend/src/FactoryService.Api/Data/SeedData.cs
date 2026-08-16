@@ -12,7 +12,7 @@ public static class SeedData
         else await db.Database.MigrateAsync();
 
         // Keep an initial administrator available, but leave operational data
-        // (plants, operators, workstations, and responses) for the administrator to create.
+        // (plants, operators, and responses) for the administrator to create.
         if (await db.PortalUsers.AnyAsync(x => x.Username == "admin")) return;
 
         (string hash, string salt) = SecureHash.HashPassword("Admin123!");

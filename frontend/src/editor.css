@@ -9,6 +9,10 @@
 }
 
 .row-action:hover { border-color: var(--green); color: var(--green); }
+.row-actions { display: flex; justify-content: flex-end; gap: 7px; }
+.row-action.delete { border-color: #f0d1cd; color: #b42318; }
+.row-action.delete:hover { border-color: #b42318; background: #fff7f6; }
+.directory-error { margin: 0; padding: 12px 25px; border-bottom: 1px solid #f0d1cd; background: #fff7f6; color: #b42318; font-size: .72rem; font-weight: 700; }
 
 .modal-backdrop {
   position: fixed;
@@ -37,10 +41,8 @@
 .editor-grid label { display: grid; gap: 7px; font-size: .7rem; font-weight: 750; }
 .editor-grid label.wide { grid-column: 1 / -1; }
 .editor-grid input, .editor-grid select { border: 1px solid var(--line); border-radius: 9px; padding: 11px; background: #f7f9fa; color: var(--navy); }
-.check-label { display: flex; align-items: center; gap: 8px; margin-top: 18px; font-size: .72rem; font-weight: 750; }
 .editor-modal > footer { display: flex; align-items: center; gap: 10px; margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
 .editor-modal > footer > span { flex: 1; }
-.danger-button { border: 0; border-radius: 9px; padding: 10px 13px; background: #fff0ee; color: #b42318; font-weight: 750; }
 
 @media (max-width: 580px) {
   .modal-backdrop { padding: 0; }

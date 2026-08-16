@@ -7,7 +7,6 @@ namespace FactoryService.Api.Data;
 public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options) : DbContext(options)
 {
     public DbSet<Plant> Plants => Set<Plant>();
-    public DbSet<Workstation> Workstations => Set<Workstation>();
     public DbSet<FactoryOperator> Operators => Set<FactoryOperator>();
     public DbSet<QrSession> QrSessions => Set<QrSession>();
     public DbSet<RespondentDevice> RespondentDevices => Set<RespondentDevice>();
@@ -37,9 +36,7 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
             }
         }
 
-        modelBuilder.Entity<Plant>().HasIndex(x => x.Code).IsUnique();
-        modelBuilder.Entity<Workstation>().HasIndex(x => x.DeviceId).IsUnique();
-        modelBuilder.Entity<FactoryOperator>().HasIndex(x => x.AdUsername).IsUnique();
+        modelBuilder.Entity<FactoryOperator>().HasIndex(x => x.OperatorId).IsUnique();
         modelBuilder.Entity<QrSession>().HasIndex(x => x.TokenHash).IsUnique();
         modelBuilder.Entity<RespondentDevice>().HasIndex(x => x.DeviceTokenHash).IsUnique();
         modelBuilder.Entity<SurveyResponse>().HasIndex(x => x.IdempotencyKey).IsUnique();
@@ -47,29 +44,19 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
         modelBuilder.Entity<PortalSession>().HasIndex(x => x.TokenHash).IsUnique();
         modelBuilder.Entity<Rating>().HasIndex(x => new { x.SurveyResponseId, x.ServiceType }).IsUnique();
 
-        modelBuilder.Entity<Workstation>()
-            .HasOne(x => x.Plant).WithMany().HasForeignKey(x => x.PlantId)
-            .OnDelete(DeleteBehavior.NoAction);
         modelBuilder.Entity<FactoryOperator>()
             .HasOne(x => x.Plant).WithMany().HasForeignKey(x => x.PlantId)
             .OnDelete(DeleteBehavior.NoAction);
 
-        modelBuilder.Entity<Workstation>().Property(x => x.Status).HasConversion<string>();
         modelBuilder.Entity<QrSession>().Property(x => x.Status).HasConversion<string>();
         modelBuilder.Entity<Rating>().Property(x => x.ServiceType).HasConversion<string>();
         modelBuilder.Entity<PortalUser>().Property(x => x.Role).HasConversion<string>();
 
-        modelBuilder.Entity<FactoryOperator>()
-            .HasOne(x => x.Workstation).WithMany().HasForeignKey(x => x.WorkstationId)
-            .OnDelete(DeleteBehavior.NoAction);
         modelBuilder.Entity<QrSession>()
             .HasOne(x => x.Operator).WithMany().HasForeignKey(x => x.OperatorId)
             .OnDelete(DeleteBehavior.NoAction);
         modelBuilder.Entity<QrSession>()
             .HasOne(x => x.Plant).WithMany().HasForeignKey(x => x.PlantId)
-            .OnDelete(DeleteBehavior.NoAction);
-        modelBuilder.Entity<QrSession>()
-            .HasOne(x => x.Workstation).WithMany().HasForeignKey(x => x.WorkstationId)
             .OnDelete(DeleteBehavior.NoAction);
         modelBuilder.Entity<SurveyResponse>()
             .HasOne(x => x.Operator).WithMany().HasForeignKey(x => x.OperatorId)
@@ -82,9 +69,6 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
             .OnDelete(DeleteBehavior.NoAction);
         modelBuilder.Entity<SurveyResponse>()
             .HasOne(x => x.RespondentDevice).WithMany().HasForeignKey(x => x.RespondentDeviceId)
-            .OnDelete(DeleteBehavior.NoAction);
-        modelBuilder.Entity<SurveyResponse>()
-            .HasOne(x => x.Workstation).WithMany().HasForeignKey(x => x.WorkstationId)
             .OnDelete(DeleteBehavior.NoAction);
         modelBuilder.Entity<SurveyResponse>()
             .HasMany(x => x.Ratings).WithOne(x => x.SurveyResponse).HasForeignKey(x => x.SurveyResponseId)

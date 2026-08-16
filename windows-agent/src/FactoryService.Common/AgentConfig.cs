@@ -5,21 +5,11 @@ namespace FactoryService.Common;
 
 public sealed record AgentConfig
 {
+    [JsonPropertyName("apiBaseUrl")]
     public string ApiBaseUrl { get; init; } = "http://localhost:5000";
-    public string AgentKey { get; init; } = "demo-agent-key";
-    public string DeviceId { get; init; } = "demo-workstation";
-    public string ComputerName { get; init; } = Environment.MachineName;
-    public string WindowsUsernameOverride { get; init; } = "";
-    public int QrRefreshSeconds { get; init; } = 60;
-    public int HeartbeatSeconds { get; init; } = 60;
-    public int QrDisplaySeconds { get; init; } = 0;
-    public bool QrTopMost { get; init; } = true;
-    public bool TestMode { get; init; }
 
-    [JsonIgnore]
-    public string EffectiveWindowsUsername => string.IsNullOrWhiteSpace(WindowsUsernameOverride)
-        ? $"{Environment.UserDomainName}\\{Environment.UserName}"
-        : WindowsUsernameOverride;
+    [JsonPropertyName("operatorId")]
+    public string OperatorId { get; init; } = "";
 }
 
 public static class AgentConfigStore

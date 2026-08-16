@@ -123,5 +123,5 @@ Write-Host "Factory Service is ready." -ForegroundColor Green
 Write-Host "Admin:  http://localhost:5173/admin"
 Write-Host "API:    http://localhost:5000/health"
 if (-not $NoCompanion) {
-    Write-Host "QR display: running on this screen"
+    Write-Host "QR display: Turmo panel on COM3"
 }

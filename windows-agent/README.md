@@ -6,8 +6,9 @@ This is a .NET 10 Windows agent split into two processes:
   machine configuration, records Windows session changes, and is the future home
   of ESP32/API communication.
 - **FactoryService.Companion** runs in the signed-in user's interactive session.
-  It shows a full-screen QR when it starts and whenever Windows reports that the
-  session was unlocked. It also provides a tray icon.
+  It sends a 320×480 QR design directly to the Turmo USB panel on COM3 when it
+  starts, every minute, and whenever Windows reports that the session was
+  unlocked. It also provides a tray icon and does not open a desktop window.
 
 Windows isolates services in Session 0, so the service intentionally does not
 attempt to draw the QR on the user's desktop.
@@ -32,16 +33,19 @@ Run the interactive companion:
 dotnet run --project .\src\FactoryService.Companion
 ```
 
-The companion immediately displays the configured QR. Press `Esc` to close the
-QR window; the tray process remains running. Double-click the tray icon to show
-the QR again. Lock and unlock Windows to test the session notification.
+The companion immediately sends the configured QR to the Turmo panel. Double-click
+the tray icon to refresh the QR manually. Close the official TURMO app first,
+because only one process can use COM3 at a time.
 
 ## Configuration
 
 Configuration is source/deployment-local: `windows-agent/config.json` is copied
 beside both executables and is never stored under AppData or ProgramData.
-`config.example.json` documents the fields. The companion requests short-lived,
-backend-signed QR sessions and never contains the backend signing key.
+`config.example.json` documents the only two fields: `apiBaseUrl` and
+`operatorId`. Create the operator in the administration portal, then copy its
+generated Operator ID into this file. The companion requests short-lived,
+backend-signed QR sessions for that operator and never contains the backend
+signing key.
 
 Logs are written to:
 

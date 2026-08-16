@@ -3,6 +3,7 @@
 **/obj/
 *.user
 *.suo
+**/.vs/
 
 # Frontend
 frontend/node_modules/

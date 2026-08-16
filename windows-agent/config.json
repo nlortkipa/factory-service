@@ -1,12 +1,4 @@
 {
-  "ApiBaseUrl": "http://localhost:5000",
-  "AgentKey": "123456789",
-  "DeviceId": "123456789",
-  "ComputerName": "nikoloz-desktop",
-  "WindowsUsernameOverride": "nikoloz",
-  "QrRefreshSeconds": 60,
-  "HeartbeatSeconds": 60,
-  "QrDisplaySeconds": 0,
-  "QrTopMost": true,
-  "TestMode": false
+  "apiBaseUrl": "http://localhost:5000",
+  "operatorId": "07IdLcVyn4q-s77Or8GldZwg_BsoQzSM"
 }

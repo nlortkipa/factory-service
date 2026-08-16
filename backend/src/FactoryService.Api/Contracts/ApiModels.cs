@@ -4,13 +4,11 @@ namespace FactoryService.Api.Contracts;
 
 public sealed record LoginRequest(string Username, string Password);
 public sealed record VerifyMfaRequest(Guid ChallengeId, string Code);
-public sealed record AgentQrRequest(string DeviceId, string ComputerName, string WindowsUsername, string ClientVersion, bool IsTest = false);
-public sealed record AgentHeartbeatRequest(string DeviceId, string ComputerName, string WindowsUsername, string ClientVersion, string Status, string? ErrorCode, DateTimeOffset? LastRenderAt);
+public sealed record AgentQrRequest(string OperatorId);
 public sealed record RatingInput(ServiceType ServiceType, int Score, string? Comment);
 public sealed record SurveySubmitRequest(string IdempotencyKey, IReadOnlyList<RatingInput> Ratings);
-public sealed record PlantInput(string Code, string Name, string Address, string TimeZone, bool IsActive);
-public sealed record OperatorInput(string AdUsername, string DisplayName, Guid PlantId, Guid? WorkstationId, bool IsActive);
-public sealed record WorkstationInput(string DeviceId, string ComputerName, Guid PlantId, string TerminalNumber, string ScreenModel, string Serial, string AgentKey, bool IsActive);
+public sealed record PlantInput(string Name, string Address, string TimeZone);
+public sealed record OperatorInput(string DisplayName, Guid PlantId);
 
 public sealed class FactoryOptions
 {

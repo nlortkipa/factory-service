@@ -5,17 +5,17 @@ using FactoryService.Api.Domain;
 
 namespace FactoryService.Api.Services;
 
-public sealed record ReportRow(DateTimeOffset SubmittedAt, string Plant, string Operator, string Workstation, ServiceType Service, int Score, string Comment);
+public sealed record ReportRow(DateTimeOffset SubmittedAt, string Plant, string Operator, ServiceType Service, int Score, string Comment);
 
 public static class ReportExportService
 {
     public static byte[] Csv(IReadOnlyList<ReportRow> rows)
     {
-        var sb = new StringBuilder("SubmittedAt,Plant,Operator,Workstation,Service,Score,Comment\r\n");
+        var sb = new StringBuilder("SubmittedAt,Plant,Operator,Service,Score,Comment\r\n");
         foreach (ReportRow row in rows)
         {
             sb.Append(CsvCell(row.SubmittedAt.ToString("O"))).Append(',').Append(CsvCell(row.Plant)).Append(',')
-              .Append(CsvCell(row.Operator)).Append(',').Append(CsvCell(row.Workstation)).Append(',')
+              .Append(CsvCell(row.Operator)).Append(',')
               .Append(row.Service).Append(',').Append(row.Score).Append(',').Append(CsvCell(row.Comment)).Append("\r\n");
         }
         return new UTF8Encoding(true).GetBytes(sb.ToString());
@@ -25,15 +25,15 @@ public static class ReportExportService
     {
         using var workbook = new XLWorkbook();
         IXLWorksheet sheet = workbook.AddWorksheet("Ratings");
-        string[] headers = ["Submitted at", "Plant", "Operator", "Workstation", "Service", "Score", "Comment"];
+        string[] headers = ["Submitted at", "Plant", "Operator", "Service", "Score", "Comment"];
         for (int i = 0; i < headers.Length; i++) sheet.Cell(1, i + 1).Value = headers[i];
         for (int i = 0; i < rows.Count; i++)
         {
             ReportRow row = rows[i]; int r = i + 2;
             sheet.Cell(r, 1).Value = row.SubmittedAt.LocalDateTime;
             sheet.Cell(r, 2).Value = row.Plant; sheet.Cell(r, 3).Value = row.Operator;
-            sheet.Cell(r, 4).Value = row.Workstation; sheet.Cell(r, 5).Value = row.Service.ToString();
-            sheet.Cell(r, 6).Value = row.Score; sheet.Cell(r, 7).Value = row.Comment;
+            sheet.Cell(r, 4).Value = row.Service.ToString();
+            sheet.Cell(r, 5).Value = row.Score; sheet.Cell(r, 6).Value = row.Comment;
         }
         sheet.Row(1).Style.Fill.BackgroundColor = XLColor.FromHtml("#193551");
         sheet.Row(1).Style.Font.FontColor = XLColor.White; sheet.Row(1).Style.Font.Bold = true;

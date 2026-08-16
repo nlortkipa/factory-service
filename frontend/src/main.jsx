@@ -10,7 +10,7 @@ const serviceCopy = {
   Loading: { title: 'დატვირთვის მომსახურება', subtitle: 'ქარხნის მიხედვით' },
 }
 const scoreLabels = ['ძალიან ცუდი', 'ცუდი', 'საშუალო', 'კარგი', 'შესანიშნავი']
-const icons = { dashboard: '⌁', responses: '≡', plants: '◇', operators: '◎', devices: '▣', settings: '⚙', audit: '↺' }
+const icons = { dashboard: '⌁', responses: '≡', plants: '◇', operators: '◎', settings: '⚙', audit: '↺' }
 
 function createIdempotencyKey() {
   const cryptoApi = globalThis.crypto
@@ -38,7 +38,7 @@ function Landing() {
     <div className="landing-mark">KC</div>
     <p className="eyebrow">KARTULI CEMENT</p>
     <h1>მომსახურების შეფასების სისტემა</h1>
-    <p>შეფასების ფორმა იხსნება სამუშაო ეკრანზე ნაჩვენები QR კოდის სკანირებით.</p>
+    <p>შეფასების ფორმა იხსნება ეკრანზე ნაჩვენები QR კოდის სკანირებით.</p>
     <a className="primary-button inline" href="/admin">ადმინისტრაციული პორტალი</a>
   </main>
 }
@@ -81,7 +81,7 @@ function SurveyPage({ token }) {
         <strong>მომსახურების შეფასება</strong>
         <span>ნაბიჯი {step + 1}/3</span>
       </header>
-      <div className="survey-context"><b>{session.plant}</b><span>{session.operatorName} · {session.terminal}</span></div>
+      <div className="survey-context"><b>{session.plant}</b><span>{session.operatorName}</span></div>
       <div className="survey-body" key={type}>
         <p className="eyebrow dark">{serviceCopy[type].subtitle}</p>
         <h1>{serviceCopy[type].title}</h1>
@@ -127,9 +127,9 @@ function Login({ onAuthenticated }) {
 function Portal({ onLogout }) {
   const [tab, setTab] = useState('dashboard')
   const [user, setUser] = useState(null)
-  const tabs = [['dashboard','მიმოხილვა'],['responses','შეფასებები'],['plants','ქარხნები'],['operators','ოპერატორები'],['devices','მოწყობილობები'],['settings','პარამეტრები'],['audit','აუდიტი']]
+  const tabs = [['dashboard','მიმოხილვა'],['responses','შეფასებები'],['plants','ქარხნები'],['operators','ოპერატორები'],['settings','პარამეტრები'],['audit','აუდიტი']]
   useEffect(() => { api('/api/auth/me').then(setUser).catch(() => {}) }, [])
-  return <div className="portal"><aside className="sidebar"><div className="sidebar-brand"><span>KC</span><strong>KARTULI<br/>CEMENT</strong></div><nav>{tabs.map(([key,label]) => <button key={key} className={tab === key ? 'active' : ''} onClick={() => setTab(key)}><i>{icons[key]}</i><span>{label}</span></button>)}</nav><button className="logout" onClick={onLogout}>გასვლა</button></aside><div className="portal-main"><header className="topbar"><div><p className="eyebrow dark">მომსახურების შეფასების სისტემა</p><h1>{tabs.find(x => x[0] === tab)?.[1]}</h1></div><div className="user-chip"><span>{user?.displayName?.[0] || 'A'}</span><div><b>{user?.displayName || 'ადმინისტრატორი'}</b><small>{roleName(user?.role)}</small></div></div></header><main className="content">{tab === 'dashboard' && <Dashboard />}{tab === 'responses' && <Responses />}{tab === 'plants' && <Directory type="plants" />}{tab === 'operators' && <Directory type="operators" />}{tab === 'devices' && <Directory type="workstations" />}{tab === 'settings' && <Settings />}{tab === 'audit' && <Audit />}</main></div></div>
+  return <div className="portal"><aside className="sidebar"><div className="sidebar-brand"><span>KC</span><strong>KARTULI<br/>CEMENT</strong></div><nav>{tabs.map(([key,label]) => <button key={key} className={tab === key ? 'active' : ''} onClick={() => setTab(key)}><i>{icons[key]}</i><span>{label}</span></button>)}</nav><button className="logout" onClick={onLogout}>გასვლა</button></aside><div className="portal-main"><header className="topbar"><div><p className="eyebrow dark">მომსახურების შეფასების სისტემა</p><h1>{tabs.find(x => x[0] === tab)?.[1]}</h1></div><div className="user-chip"><span>{user?.displayName?.[0] || 'A'}</span><div><b>{user?.displayName || 'ადმინისტრატორი'}</b><small>{roleName(user?.role)}</small></div></div></header><main className="content">{tab === 'dashboard' && <Dashboard />}{tab === 'responses' && <Responses />}{tab === 'plants' && <Directory type="plants" />}{tab === 'operators' && <Directory type="operators" />}{tab === 'settings' && <Settings />}{tab === 'audit' && <Audit />}</main></div></div>
 }
 
 function Dashboard() {
@@ -139,7 +139,7 @@ function Dashboard() {
   useEffect(() => { api('/api/admin/plants').then(setPlants) }, [])
   useEffect(() => { api(`/api/admin/dashboard?${queryParams(filters)}`).then(setData) }, [filters])
   if (!data) return <Loading />
-  return <><section className="filter-bar"><label>პერიოდი<input type="date" value={filters.from} onChange={e => setFilters({ ...filters, from: e.target.value })}/></label><span>—</span><label><span className="sr-only">დასასრული</span><input type="date" value={filters.to} onChange={e => setFilters({ ...filters, to: e.target.value })}/></label><label>ქარხანა<select value={filters.plantId} onChange={e => setFilters({ ...filters, plantId: e.target.value })}><option value="">ყველა</option>{plants.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label></section><section className="metric-grid"><Metric label="სულ შეფასება" value={formatNumber(data.total)} note={`${data.uniqueDevices} უნიკალური მოწყობილობა`} /><Metric label="გაყიდვები" value={data.sales.average} stars note={`${data.sales.lowPercent}% დაბალი`} /><Metric label="სასწორი" value={data.scale.average} stars note={`${data.scale.lowPercent}% დაბალი`} /><Metric label="დატვირთვა" value={data.loading.average} stars note={`${data.loading.lowPercent}% დაბალი`} /></section><section className="dashboard-grid"><article className="panel trend-panel"><PanelTitle title="ქულის დინამიკა" note="სამივე მომსახურების საშუალო"/><TrendChart data={data.trend}/></article><article className="panel"><PanelTitle title="ქარხნების შედარება" note="საშუალო ქულა"/><div className="plant-bars">{data.plants.map((plant,index) => <div key={plant.id}><span>{index + 1}</span><b>{plant.name}</b><div><i style={{width:`${plant.average / 5 * 100}%`}}/></div><strong>{plant.average}</strong></div>)}</div></article><article className="panel health"><PanelTitle title="მოწყობილობების სტატუსი" note="ბოლო heartbeat"/><div className="health-row">{data.health.map(item => <div key={item.status} className={item.status.toLowerCase()}><span/>{statusName(item.status)}<b>{item.count}</b></div>)}</div><p className="blocked-note">{data.blockedAttempts} დაბლოკილი განმეორებითი მცდელობა პერიოდში</p></article></section></>
+  return <><section className="filter-bar"><label>პერიოდი<input type="date" value={filters.from} onChange={e => setFilters({ ...filters, from: e.target.value })}/></label><span>—</span><label><span className="sr-only">დასასრული</span><input type="date" value={filters.to} onChange={e => setFilters({ ...filters, to: e.target.value })}/></label><label>ქარხანა<select value={filters.plantId} onChange={e => setFilters({ ...filters, plantId: e.target.value })}><option value="">ყველა</option>{plants.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label></section><section className="metric-grid"><Metric label="სულ შეფასება" value={formatNumber(data.total)} note={`${data.uniqueDevices} უნიკალური მოწყობილობა`} /><Metric label="გაყიდვები" value={data.sales.average} stars note={`${data.sales.lowPercent}% დაბალი`} /><Metric label="სასწორი" value={data.scale.average} stars note={`${data.scale.lowPercent}% დაბალი`} /><Metric label="დატვირთვა" value={data.loading.average} stars note={`${data.loading.lowPercent}% დაბალი`} /></section><section className="dashboard-grid"><article className="panel trend-panel"><PanelTitle title="ქულის დინამიკა" note="სამივე მომსახურების საშუალო"/><TrendChart data={data.trend}/></article><article className="panel"><PanelTitle title="ქარხნების შედარება" note="საშუალო ქულა"/><div className="plant-bars">{data.plants.map((plant,index) => <div key={plant.id}><span>{index + 1}</span><b>{plant.name}</b><div><i style={{width:`${plant.average / 5 * 100}%`}}/></div><strong>{plant.average}</strong></div>)}</div><p className="blocked-note">{data.blockedAttempts} დაბლოკილი განმეორებითი მცდელობა პერიოდში</p></article></section></>
 }
 
 function Metric({ label, value, stars, note }) { return <article className="metric"><p>{label}</p><div><strong>{value}</strong>{stars && <span className="stars">★★★★★</span>}</div><small>{note}</small></article> }
@@ -160,25 +160,29 @@ function Responses() {
 
 function Directory({ type }) {
   const [items, setItems] = useState(null)
-  const [references, setReferences] = useState({ plants: [], workstations: [] })
+  const [references, setReferences] = useState({ plants: [] })
   const [editing, setEditing] = useState(null)
   const [error, setError] = useState('')
-  const titles = { plants: 'ქარხნების რეესტრი', operators: 'ოპერატორები', workstations: 'სამუშაო ადგილები და ეკრანები' }
+  const titles = { plants: 'ქარხნების რეესტრი', operators: 'ოპერატორები' }
   const load = () => api(`/api/admin/${type}`).then(setItems)
-  useEffect(() => { load(); if (type !== 'plants') api('/api/admin/plants').then(plants => setReferences(value => ({...value, plants}))); if (type === 'operators') api('/api/admin/workstations').then(workstations => setReferences(value => ({...value, workstations}))) }, [type])
+  useEffect(() => { load(); if (type === 'operators') api('/api/admin/plants').then(plants => setReferences({ plants })) }, [type])
   if (!items) return <Loading />
-  const editButton = item => <button className="row-action" onClick={() => setEditing(item)}>რედაქტირება</button>
-  const config = type === 'plants' ? { cols:['კოდი','დასახელება','მისამართი','სტატუსი',''], rows:items.map(x => [x.code,x.name,x.address,<Status active={x.isActive}/>,editButton(x)]) } : type === 'operators' ? { cols:['AD მომხმარებელი','სახელი','ქარხანა','სამუშაო ადგილი','სტატუსი',''], rows:items.map(x => [x.adUsername,x.displayName,x.plantName,x.workstation || '—',<Status active={x.isActive}/>,editButton(x)]) } : { cols:['Device ID','კომპიუტერი','ქარხანა','ოპერატორი','ბოლო კავშირი','სტატუსი',''], rows:items.map(x => [x.deviceId,x.computerName,x.plantName,x.activeWindowsUser || '—',x.lastSeen ? formatDateTime(x.lastSeen) : '—',<Status status={x.status}/>,editButton(x)]) }
   const save = async value => { setError(''); try { await api(`/api/admin/${type}${value.id ? `/${value.id}` : ''}`, { method:value.id ? 'PUT' : 'POST', body:JSON.stringify(value) }); setEditing(null); load() } catch(e) { setError(e.message) } }
-  const deactivate = async value => { if (!confirm('ჩანაწერი გახდება არააქტიური. გაგრძელდეს?')) return; await api(`/api/admin/${type}/${value.id}`, {method:'DELETE'}); setEditing(null); load() }
-  return <><section className="panel table-panel"><div className="table-toolbar"><div><h2>{titles[type]}</h2><p>{items.length} ჩანაწერი</p></div><button className="small-button" onClick={() => setEditing({ isActive:true, timeZone:'Asia/Tbilisi', plantId:references.plants[0]?.id || '', screenModel:'On-screen QR preview' })}>+ დამატება</button></div><DataTable columns={config.cols} rows={config.rows}/></section>{editing && <DirectoryEditor type={type} value={editing} references={references} error={error} onClose={() => setEditing(null)} onSave={save} onDeactivate={deactivate}/>}</>
+  const remove = async item => {
+    if (!confirm('ჩანაწერი სამუდამოდ წაიშლება. გაგრძელდეს?')) return
+    setError('')
+    try { await api(`/api/admin/${type}/${item.id}`, {method:'DELETE'}); load() } catch(e) { setError(e.message) }
+  }
+  const actions = item => <div className="row-actions"><button className="row-action" onClick={() => setEditing(item)}>შეცვლა</button><button className="row-action delete" onClick={() => remove(item)}>წაშლა</button></div>
+  const config = type === 'plants' ? { cols:['დასახელება','მისამართი',''], rows:items.map(x => [x.name,x.address,actions(x)]) } : { cols:['Operator ID','სახელი','ქარხანა',''], rows:items.map(x => [<code>{x.operatorId}</code>,x.displayName,x.plantName,actions(x)]) }
+  return <><section className="panel table-panel"><div className="table-toolbar"><div><h2>{titles[type]}</h2><p>{items.length} ჩანაწერი</p></div><button className="small-button" onClick={() => { setError(''); setEditing({ timeZone:'Asia/Tbilisi', plantId:references.plants[0]?.id || '' }) }}>+ შექმნა</button></div>{error && !editing && <p className="directory-error">{error}</p>}<DataTable columns={config.cols} rows={config.rows}/></section>{editing && <DirectoryEditor type={type} value={editing} references={references} error={error} onClose={() => setEditing(null)} onSave={save}/>}</>
 }
 
-function DirectoryEditor({ type, value, references, error, onClose, onSave, onDeactivate }) {
+function DirectoryEditor({ type, value, references, error, onClose, onSave }) {
   const [form,setForm] = useState(value)
   const set = (key,next) => setForm(current => ({...current,[key]:next}))
   const submit = event => { event.preventDefault(); onSave(form) }
-  return <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && onClose()}><form className="editor-modal" onSubmit={submit}><header><div><p className="eyebrow dark">{value.id ? 'ჩანაწერის მართვა' : 'ახალი ჩანაწერი'}</p><h2>{type === 'plants' ? 'ქარხანა' : type === 'operators' ? 'ოპერატორი' : 'სამუშაო ადგილი'}</h2></div><button type="button" onClick={onClose} aria-label="დახურვა">×</button></header>{type === 'plants' && <div className="editor-grid"><label>კოდი<input required value={form.code || ''} onChange={e=>set('code',e.target.value)}/></label><label>დასახელება<input required value={form.name || ''} onChange={e=>set('name',e.target.value)}/></label><label className="wide">მისამართი<input value={form.address || ''} onChange={e=>set('address',e.target.value)}/></label><label>დროის სარტყელი<input value={form.timeZone || ''} onChange={e=>set('timeZone',e.target.value)}/></label></div>}{type === 'operators' && <div className="editor-grid"><label className="wide">AD / Windows მომხმარებელი<input required value={form.adUsername || ''} onChange={e=>set('adUsername',e.target.value)}/></label><label>სახელი და გვარი<input required value={form.displayName || ''} onChange={e=>set('displayName',e.target.value)}/></label><label>ქარხანა<select required value={form.plantId || ''} onChange={e=>set('plantId',e.target.value)}>{references.plants.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select></label><label>სამუშაო ადგილი<select value={form.workstationId || ''} onChange={e=>set('workstationId',e.target.value || null)}><option value="">არ არის მიბმული</option>{references.workstations.map(x=><option key={x.id} value={x.id}>{x.computerName}</option>)}</select></label></div>}{type === 'workstations' && <div className="editor-grid"><label>Device ID<input required value={form.deviceId || ''} onChange={e=>set('deviceId',e.target.value)}/></label><label>კომპიუტერის სახელი<input required value={form.computerName || ''} onChange={e=>set('computerName',e.target.value)}/></label><label>ქარხანა<select required value={form.plantId || ''} onChange={e=>set('plantId',e.target.value)}>{references.plants.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select></label><label>ფანჯარა / ტერმინალი<input value={form.terminalNumber || ''} onChange={e=>set('terminalNumber',e.target.value)}/></label><label>ეკრანის მოდელი<input value={form.screenModel || ''} onChange={e=>set('screenModel',e.target.value)}/></label><label>სერიული ნომერი<input value={form.serial || ''} onChange={e=>set('serial',e.target.value)}/></label><label className="wide">Agent key {form.id && '(ცარიელი — უცვლელი)'}<input required={!form.id} type="password" value={form.agentKey || ''} onChange={e=>set('agentKey',e.target.value)}/></label></div>}<label className="check-label"><input type="checkbox" checked={form.isActive !== false} onChange={e=>set('isActive',e.target.checked)}/> აქტიური ჩანაწერი</label>{error && <p className="form-error">{error}</p>}<footer>{value.id && <button type="button" className="danger-button" onClick={() => onDeactivate(form)}>დეაქტივაცია</button>}<span/><button type="button" className="text-button" onClick={onClose}>გაუქმება</button><button className="small-button">შენახვა</button></footer></form></div>
+  return <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && onClose()}><form className="editor-modal" onSubmit={submit}><header><div><p className="eyebrow dark">{value.id ? 'ჩანაწერის შეცვლა' : 'ჩანაწერის შექმნა'}</p><h2>{type === 'plants' ? 'ქარხანა' : 'ოპერატორი'}</h2></div><button type="button" onClick={onClose} aria-label="დახურვა">×</button></header>{type === 'plants' && <div className="editor-grid"><label>დასახელება<input required value={form.name || ''} onChange={e=>set('name',e.target.value)}/></label><label className="wide">მისამართი<input value={form.address || ''} onChange={e=>set('address',e.target.value)}/></label><label>დროის სარტყელი<input value={form.timeZone || ''} onChange={e=>set('timeZone',e.target.value)}/></label></div>}{type === 'operators' && <div className="editor-grid">{form.operatorId && <label className="wide">Operator ID<input readOnly value={form.operatorId}/></label>}<label>სახელი და გვარი<input required value={form.displayName || ''} onChange={e=>set('displayName',e.target.value)}/></label><label>ქარხანა<select required value={form.plantId || ''} onChange={e=>set('plantId',e.target.value)}>{references.plants.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select></label></div>}{error && <p className="form-error">{error}</p>}<footer><span/><button type="button" className="text-button" onClick={onClose}>გაუქმება</button><button className="small-button">{value.id ? 'შეცვლა' : 'შექმნა'}</button></footer></form></div>
 }
 
 function Settings() {
@@ -193,7 +197,6 @@ function Settings() {
 
 function Audit() { const [items,setItems]=useState(null); useEffect(()=>{api('/api/admin/audit').then(setItems)},[]); if(!items)return <Loading/>; return <section className="panel table-panel"><div className="table-toolbar"><div><h2>აუდიტის ჟურნალი</h2><p>უსაფრთხოებისა და ადმინისტრირების მოვლენები</p></div></div><DataTable columns={['დრო','მოქმედება','ობიექტი','Correlation ID']} rows={items.map(x=>[formatDateTime(x.timestamp),x.action,`${x.objectType} · ${x.objectId}`,x.correlationId])}/></section> }
 function DataTable({ columns, rows }) { return <div className="table-scroll"><table><thead><tr>{columns.map(x => <th key={x}>{x}</th>)}</tr></thead><tbody>{rows.length ? rows.map((row,i)=><tr key={i}>{row.map((cell,j)=><td key={j}>{cell}</td>)}</tr>) : <tr><td colSpan={columns.length}>მონაცემები არ მოიძებნა</td></tr>}</tbody></table></div> }
-function Status({ active, status }) { const value = status || (active ? 'Active' : 'Inactive'); return <span className={`status-badge ${value.toLowerCase()}`}>{statusName(value)}</span> }
 function Loading() { return <div className="loading"><span/><p>მონაცემები იტვირთება…</p></div> }
 function Empty({title,detail}) { return <div className="empty"><h2>{title}</h2><p>{detail}</p></div> }
 
@@ -202,7 +205,6 @@ function formatDateTime(value) { return new Intl.DateTimeFormat('ka-GE',{dateSty
 function formatNumber(value) { return new Intl.NumberFormat('ka-GE').format(value) }
 function isoDate(offset) { const date = new Date(); date.setDate(date.getDate()+offset); return date.toISOString().slice(0,10) }
 function queryParams(values) { return new URLSearchParams(Object.entries(values).filter(([,value]) => value !== '' && value != null)).toString() }
-function statusName(value) { return ({Online:'ონლაინ',Warning:'გაფრთხილება',Offline:'ოფლაინ',Active:'აქტიური',Inactive:'არააქტიური'})[value] || value }
 function roleName(value) { return ({SystemAdministrator:'სისტემის ადმინისტრატორი',PlantAdministrator:'ქარხნის ადმინისტრატორი',ReportViewer:'რეპორტების ნახვა',Auditor:'აუდიტორი'})[value] || value }
 
 createRoot(document.getElementById('root')).render(<React.StrictMode><App /></React.StrictMode>)

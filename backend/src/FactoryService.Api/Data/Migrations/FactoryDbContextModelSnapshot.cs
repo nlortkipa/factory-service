@@ -100,11 +100,6 @@ namespace FactoryService.Api.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
-                    b.Property<string>("AdUsername")
-                        .IsRequired()
-                        .HasMaxLength(160)
-                        .HasColumnType("nvarchar(160)");
-
                     b.Property<string>("DisplayName")
                         .IsRequired()
                         .HasMaxLength(200)
@@ -119,20 +114,20 @@ namespace FactoryService.Api.Data.Migrations
                     b.Property<bool>("IsActive")
                         .HasColumnType("bit");
 
-                    b.Property<Guid>("PlantId")
-                        .HasColumnType("uniqueidentifier");
+                    b.Property<string>("OperatorId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
 
-                    b.Property<Guid?>("WorkstationId")
+                    b.Property<Guid>("PlantId")
                         .HasColumnType("uniqueidentifier");
 
                     b.HasKey("Id");
 
-                    b.HasIndex("AdUsername")
+                    b.HasIndex("OperatorId")
                         .IsUnique();
 
                     b.HasIndex("PlantId");
-
-                    b.HasIndex("WorkstationId");
 
                     b.ToTable("Operators");
                 });
@@ -191,11 +186,6 @@ namespace FactoryService.Api.Data.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)");
 
-                    b.Property<string>("Code")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("nvarchar(32)");
-
                     b.Property<bool>("IsActive")
                         .HasColumnType("bit");
 
@@ -210,9 +200,6 @@ namespace FactoryService.Api.Data.Migrations
                         .HasColumnType("nvarchar(100)");
 
                     b.HasKey("Id");
-
-                    b.HasIndex("Code")
-                        .IsUnique();
 
                     b.ToTable("Plants");
                 });
@@ -342,9 +329,6 @@ namespace FactoryService.Api.Data.Migrations
                         .HasMaxLength(128)
                         .HasColumnType("nvarchar(128)");
 
-                    b.Property<Guid>("WorkstationId")
-                        .HasColumnType("uniqueidentifier");
-
                     b.HasKey("Id");
 
                     b.HasIndex("OperatorId");
@@ -353,8 +337,6 @@ namespace FactoryService.Api.Data.Migrations
 
                     b.HasIndex("TokenHash")
                         .IsUnique();
-
-                    b.HasIndex("WorkstationId");
 
                     b.ToTable("QrSessions");
                 });
@@ -505,9 +487,6 @@ namespace FactoryService.Api.Data.Migrations
                     b.Property<DateTimeOffset>("SubmittedAt")
                         .HasColumnType("datetimeoffset");
 
-                    b.Property<Guid>("WorkstationId")
-                        .HasColumnType("uniqueidentifier");
-
                     b.HasKey("Id");
 
                     b.HasIndex("IdempotencyKey")
@@ -521,86 +500,7 @@ namespace FactoryService.Api.Data.Migrations
 
                     b.HasIndex("RespondentDeviceId");
 
-                    b.HasIndex("WorkstationId");
-
                     b.ToTable("SurveyResponses");
-                });
-
-            modelBuilder.Entity("FactoryService.Api.Domain.Workstation", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<string>("ActiveWindowsUser")
-                        .IsRequired()
-                        .HasMaxLength(160)
-                        .HasColumnType("nvarchar(160)");
-
-                    b.Property<string>("AgentKeyHash")
-                        .IsRequired()
-                        .HasMaxLength(128)
-                        .HasColumnType("nvarchar(128)");
-
-                    b.Property<string>("ClientVersion")
-                        .IsRequired()
-                        .HasMaxLength(40)
-                        .HasColumnType("nvarchar(40)");
-
-                    b.Property<string>("ComputerName")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
-
-                    b.Property<string>("DeviceId")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("bit");
-
-                    b.Property<string>("LastErrorCode")
-                        .IsRequired()
-                        .HasMaxLength(80)
-                        .HasColumnType("nvarchar(80)");
-
-                    b.Property<DateTimeOffset?>("LastQrRenderedAt")
-                        .HasColumnType("datetimeoffset");
-
-                    b.Property<DateTimeOffset?>("LastSeen")
-                        .HasColumnType("datetimeoffset");
-
-                    b.Property<Guid>("PlantId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<string>("ScreenModel")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
-
-                    b.Property<string>("Serial")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("TerminalNumber")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("nvarchar(50)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("DeviceId")
-                        .IsUnique();
-
-                    b.HasIndex("PlantId");
-
-                    b.ToTable("Workstations");
                 });
 
             modelBuilder.Entity("FactoryService.Api.Domain.FactoryOperator", b =>
@@ -611,14 +511,7 @@ namespace FactoryService.Api.Data.Migrations
                         .OnDelete(DeleteBehavior.NoAction)
                         .IsRequired();
 
-                    b.HasOne("FactoryService.Api.Domain.Workstation", "Workstation")
-                        .WithMany()
-                        .HasForeignKey("WorkstationId")
-                        .OnDelete(DeleteBehavior.NoAction);
-
                     b.Navigation("Plant");
-
-                    b.Navigation("Workstation");
                 });
 
             modelBuilder.Entity("FactoryService.Api.Domain.MfaChallenge", b =>
@@ -666,17 +559,9 @@ namespace FactoryService.Api.Data.Migrations
                         .OnDelete(DeleteBehavior.NoAction)
                         .IsRequired();
 
-                    b.HasOne("FactoryService.Api.Domain.Workstation", "Workstation")
-                        .WithMany()
-                        .HasForeignKey("WorkstationId")
-                        .OnDelete(DeleteBehavior.NoAction)
-                        .IsRequired();
-
                     b.Navigation("Operator");
 
                     b.Navigation("Plant");
-
-                    b.Navigation("Workstation");
                 });
 
             modelBuilder.Entity("FactoryService.Api.Domain.Rating", b =>
@@ -716,12 +601,6 @@ namespace FactoryService.Api.Data.Migrations
                         .OnDelete(DeleteBehavior.NoAction)
                         .IsRequired();
 
-                    b.HasOne("FactoryService.Api.Domain.Workstation", "Workstation")
-                        .WithMany()
-                        .HasForeignKey("WorkstationId")
-                        .OnDelete(DeleteBehavior.NoAction)
-                        .IsRequired();
-
                     b.Navigation("Operator");
 
                     b.Navigation("Plant");
@@ -729,19 +608,6 @@ namespace FactoryService.Api.Data.Migrations
                     b.Navigation("QrSession");
 
                     b.Navigation("RespondentDevice");
-
-                    b.Navigation("Workstation");
-                });
-
-            modelBuilder.Entity("FactoryService.Api.Domain.Workstation", b =>
-                {
-                    b.HasOne("FactoryService.Api.Domain.Plant", "Plant")
-                        .WithMany()
-                        .HasForeignKey("PlantId")
-                        .OnDelete(DeleteBehavior.NoAction)
-                        .IsRequired();
-
-                    b.Navigation("Plant");
                 });
 
             modelBuilder.Entity("FactoryService.Api.Domain.SurveyResponse", b =>
