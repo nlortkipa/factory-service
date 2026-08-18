@@ -1,5 +1,6 @@
 using System.Drawing.Imaging;
 using System.IO.Ports;
+using System.Management;
 using FactoryService.Common;
 using QRCoder;
 
@@ -10,7 +11,7 @@ internal static class TurmoPanelDisplay
     private const int PanelWidth = 320;
     private const int PanelHeight = 480;
     private const int BaudRate = 115200;
-    private const string TurmoPortName = "COM3";
+    private static readonly string[] TurmoDeviceIdentifiers = ["USB35INCHIPSV2", "TURMO"];
 
     public static Task ShowQrAsync(AgentQrResponse response) => SendAsync(() => RenderQr(response));
 
@@ -25,7 +26,7 @@ internal static class TurmoPanelDisplay
         }
         catch (Exception exception) when (exception is not TurmoPanelException)
         {
-            throw new TurmoPanelException($"Could not update the Turmo panel on {TurmoPortName}: {exception.Message}", exception);
+            throw new TurmoPanelException($"Could not update the Turmo panel: {exception.Message}", exception);
         }
     });
 
@@ -107,10 +108,7 @@ internal static class TurmoPanelDisplay
 
     private static void Send(Bitmap image)
     {
-        string[] ports = SerialPort.GetPortNames();
-        string? portName = ports.FirstOrDefault(name => name.Equals(TurmoPortName, StringComparison.OrdinalIgnoreCase));
-        if (portName is null)
-            throw new InvalidOperationException($"Turmo panel was not found on {TurmoPortName}. Check that USB35INCHIPSV2 is connected.");
+        string portName = FindTurmoPort();
 
         using var port = new SerialPort(portName, BaudRate, Parity.None, 8, StopBits.One)
         {
@@ -136,6 +134,68 @@ internal static class TurmoPanelDisplay
             int count = Math.Min(PanelWidth * 8, pixels.Length - offset);
             port.Write(pixels, offset, count);
         }
+    }
+
+    private static string FindTurmoPort()
+    {
+        string[] ports = SerialPort.GetPortNames()
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (ports.Length == 0)
+            throw new InvalidOperationException("No serial ports were found. Check that USB35INCHIPSV2 is connected.");
+
+        var availablePorts = new HashSet<string>(ports, StringComparer.OrdinalIgnoreCase);
+        var matchingPorts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                "SELECT DeviceID, Name, Caption, Description, PNPDeviceID FROM Win32_SerialPort");
+            using ManagementObjectCollection devices = searcher.Get();
+            foreach (ManagementBaseObject device in devices)
+            {
+                string? deviceId = device["DeviceID"]?.ToString();
+                if (deviceId is null || !availablePorts.Contains(deviceId))
+                    continue;
+
+                string metadata = string.Join(" ", new[]
+                {
+                    device["Name"]?.ToString(),
+                    device["Caption"]?.ToString(),
+                    device["Description"]?.ToString(),
+                    device["PNPDeviceID"]?.ToString()
+                }.Where(value => !string.IsNullOrWhiteSpace(value)));
+
+                if (TurmoDeviceIdentifiers.Any(identifier =>
+                    metadata.Contains(identifier, StringComparison.OrdinalIgnoreCase)))
+                {
+                    matchingPorts.Add(deviceId);
+                }
+            }
+        }
+        catch (Exception exception) when (exception is ManagementException
+                                          or UnauthorizedAccessException
+                                          or System.Runtime.InteropServices.COMException)
+        {
+            // A single serial port is still unambiguous if Windows Management
+            // Instrumentation is unavailable or does not expose device metadata.
+        }
+
+        if (matchingPorts.Count == 1)
+            return matchingPorts.Single();
+
+        if (matchingPorts.Count > 1)
+            throw new InvalidOperationException(
+                $"More than one Turmo panel was found ({string.Join(", ", matchingPorts)}). Disconnect the unused panel and try again.");
+
+        if (ports.Length == 1)
+            return ports[0];
+
+        throw new InvalidOperationException(
+            $"Could not identify the Turmo panel among these serial ports: {string.Join(", ", ports)}. " +
+            "Disconnect unrelated serial devices and try again.");
     }
 
     private static void SendCommand(SerialPort port, byte command, int x, int y, int endX, int endY)

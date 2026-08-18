@@ -1,0 +1,15 @@
+{
+  "name": "factory-service-vercel",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "npm --prefix frontend ci && npm --prefix frontend run build"
+  },
+  "engines": {
+    "node": "22.x"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.1.0"
+  }
+}

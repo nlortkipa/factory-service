@@ -8,6 +8,5 @@
   <ItemGroup>
     <ProjectReference Include="..\FactoryService.Common\FactoryService.Common.csproj" />
     <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.0" />
-    <None Include="..\..\config.json" Link="config.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

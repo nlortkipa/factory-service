@@ -1,0 +1,17 @@
+.git
+.vercel
+.dev
+.env*
+backend
+windows-agent
+frontend/node_modules
+frontend/dist
+**/.vs
+**/bin
+**/obj
+**/artifacts
+**/logs
+*.db
+*.db-shm
+*.db-wal
+Install-FactoryService.safe.ps1

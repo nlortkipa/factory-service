@@ -14,6 +14,8 @@ public sealed record AgentConfig
 
 public static class AgentConfigStore
 {
+    private const string ApplicationDirectoryName = "Factory Service Agent";
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true,
@@ -21,26 +23,41 @@ public static class AgentConfigStore
         DefaultIgnoreCondition = JsonIgnoreCondition.Never
     };
 
-    // The requested configuration is source/deployment-local. It is copied beside both executables.
-    public static string ConfigDirectory => AppContext.BaseDirectory;
+    public static string ConfigDirectory => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        ApplicationDirectoryName);
+
+    public static string MachineDataDirectory => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+        ApplicationDirectoryName);
+
     public static string ConfigPath => Environment.GetEnvironmentVariable("FACTORY_SERVICE_CONFIG")
         ?? Path.Combine(ConfigDirectory, "config.json");
 
     public static AgentConfig LoadOrDefault()
     {
         if (!File.Exists(ConfigPath)) return new AgentConfig();
-        string json = File.ReadAllText(ConfigPath);
-        return JsonSerializer.Deserialize<AgentConfig>(json, JsonOptions)
-            ?? throw new InvalidDataException($"Configuration file is empty: {ConfigPath}");
+        return Deserialize(ConfigPath);
     }
 
     public static AgentConfig EnsureExists()
     {
         if (!File.Exists(ConfigPath))
         {
-            File.WriteAllText(ConfigPath, JsonSerializer.Serialize(new AgentConfig(), JsonOptions));
-            return new AgentConfig();
+            AgentConfig config = new();
+
+            string? directory = Path.GetDirectoryName(Path.GetFullPath(ConfigPath));
+            if (directory is not null) Directory.CreateDirectory(directory);
+            File.WriteAllText(ConfigPath, JsonSerializer.Serialize(config, JsonOptions));
+            return config;
         }
         return LoadOrDefault();
+    }
+
+    private static AgentConfig Deserialize(string path)
+    {
+        string json = File.ReadAllText(path);
+        return JsonSerializer.Deserialize<AgentConfig>(json, JsonOptions)
+            ?? throw new InvalidDataException($"Configuration file is empty: {path}");
     }
 }

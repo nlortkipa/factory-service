@@ -22,10 +22,9 @@ internal sealed class FactoryWindowsService : ServiceBase
     {
         try
         {
-            AgentConfig config = AgentConfigStore.EnsureExists();
             AgentLog.Machine(
                 $"service started; machine={Environment.MachineName}; " +
-                $"api={config.ApiBaseUrl}; operator={config.OperatorId}; config={AgentConfigStore.ConfigPath}");
+                $"data={AgentConfigStore.MachineDataDirectory}");
         }
         catch (Exception exception)
         {

@@ -10,7 +10,8 @@ const serviceCopy = {
   Loading: { title: 'დატვირთვის მომსახურება', subtitle: 'ქარხნის მიხედვით' },
 }
 const scoreLabels = ['ძალიან ცუდი', 'ცუდი', 'საშუალო', 'კარგი', 'შესანიშნავი']
-const icons = { dashboard: '⌁', responses: '≡', plants: '◇', operators: '◎', settings: '⚙', audit: '↺' }
+const icons = { dashboard: '⌁', responses: '≡', plants: '◇', operators: '◎' }
+const adminBypass = import.meta.env.VITE_ADMIN_BYPASS !== 'false'
 
 function createIdempotencyKey() {
   const cryptoApi = globalThis.crypto
@@ -104,10 +105,14 @@ function StatusScreen({ title, detail, success }) {
 }
 
 function AdminApp() {
-  const [token, setToken] = useState(localStorage.getItem('factory_service_token'))
+  const [token, setToken] = useState(adminBypass ? 'test-admin' : localStorage.getItem('factory_service_token'))
   useEffect(() => { const clear = () => setToken(null); window.addEventListener('factory-auth-expired', clear); return () => window.removeEventListener('factory-auth-expired', clear) }, [])
   if (!token) return <Login onAuthenticated={value => { localStorage.setItem('factory_service_token', value); setToken(value) }} />
-  return <Portal onLogout={() => { localStorage.removeItem('factory_service_token'); setToken(null) }} />
+  return <Portal onLogout={() => {
+    localStorage.removeItem('factory_service_token')
+    if (adminBypass) window.location.assign('/')
+    else setToken(null)
+  }} />
 }
 
 function Login({ onAuthenticated }) {
@@ -127,9 +132,9 @@ function Login({ onAuthenticated }) {
 function Portal({ onLogout }) {
   const [tab, setTab] = useState('dashboard')
   const [user, setUser] = useState(null)
-  const tabs = [['dashboard','მიმოხილვა'],['responses','შეფასებები'],['plants','ქარხნები'],['operators','ოპერატორები'],['settings','პარამეტრები'],['audit','აუდიტი']]
+  const tabs = [['dashboard','მიმოხილვა'],['responses','შეფასებები'],['plants','ქარხნები'],['operators','ოპერატორები']]
   useEffect(() => { api('/api/auth/me').then(setUser).catch(() => {}) }, [])
-  return <div className="portal"><aside className="sidebar"><div className="sidebar-brand"><span>KC</span><strong>KARTULI<br/>CEMENT</strong></div><nav>{tabs.map(([key,label]) => <button key={key} className={tab === key ? 'active' : ''} onClick={() => setTab(key)}><i>{icons[key]}</i><span>{label}</span></button>)}</nav><button className="logout" onClick={onLogout}>გასვლა</button></aside><div className="portal-main"><header className="topbar"><div><p className="eyebrow dark">მომსახურების შეფასების სისტემა</p><h1>{tabs.find(x => x[0] === tab)?.[1]}</h1></div><div className="user-chip"><span>{user?.displayName?.[0] || 'A'}</span><div><b>{user?.displayName || 'ადმინისტრატორი'}</b><small>{roleName(user?.role)}</small></div></div></header><main className="content">{tab === 'dashboard' && <Dashboard />}{tab === 'responses' && <Responses />}{tab === 'plants' && <Directory type="plants" />}{tab === 'operators' && <Directory type="operators" />}{tab === 'settings' && <Settings />}{tab === 'audit' && <Audit />}</main></div></div>
+  return <div className="portal"><aside className="sidebar"><div className="sidebar-brand"><span>KC</span><strong>KARTULI<br/>CEMENT</strong></div><nav>{tabs.map(([key,label]) => <button key={key} className={tab === key ? 'active' : ''} onClick={() => setTab(key)}><i>{icons[key]}</i><span>{label}</span></button>)}</nav><button className="logout" onClick={onLogout}>გასვლა</button></aside><div className="portal-main"><header className="topbar"><div><p className="eyebrow dark">მომსახურების შეფასების სისტემა</p><h1>{tabs.find(x => x[0] === tab)?.[1]}</h1></div><div className="user-chip"><span>{user?.displayName?.[0] || 'A'}</span><div><b>{user?.displayName || 'ადმინისტრატორი'}</b><small>{roleName(user?.role)}</small></div></div></header><main className="content">{tab === 'dashboard' && <Dashboard />}{tab === 'responses' && <Responses />}{tab === 'plants' && <Directory type="plants" />}{tab === 'operators' && <Directory type="operators" />}</main></div></div>
 }
 
 function Dashboard() {
@@ -185,17 +190,6 @@ function DirectoryEditor({ type, value, references, error, onClose, onSave }) {
   return <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && onClose()}><form className="editor-modal" onSubmit={submit}><header><div><p className="eyebrow dark">{value.id ? 'ჩანაწერის შეცვლა' : 'ჩანაწერის შექმნა'}</p><h2>{type === 'plants' ? 'ქარხანა' : 'ოპერატორი'}</h2></div><button type="button" onClick={onClose} aria-label="დახურვა">×</button></header>{type === 'plants' && <div className="editor-grid"><label>დასახელება<input required value={form.name || ''} onChange={e=>set('name',e.target.value)}/></label><label className="wide">მისამართი<input value={form.address || ''} onChange={e=>set('address',e.target.value)}/></label><label>დროის სარტყელი<input value={form.timeZone || ''} onChange={e=>set('timeZone',e.target.value)}/></label></div>}{type === 'operators' && <div className="editor-grid">{form.operatorId && <label className="wide">Operator ID<input readOnly value={form.operatorId}/></label>}<label>სახელი და გვარი<input required value={form.displayName || ''} onChange={e=>set('displayName',e.target.value)}/></label><label>ქარხანა<select required value={form.plantId || ''} onChange={e=>set('plantId',e.target.value)}>{references.plants.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select></label></div>}{error && <p className="form-error">{error}</p>}<footer><span/><button type="button" className="text-button" onClick={onClose}>გაუქმება</button><button className="small-button">{value.id ? 'შეცვლა' : 'შექმნა'}</button></footer></form></div>
 }
 
-function Settings() {
-  const [values, setValues] = useState(null); const [saved, setSaved] = useState(false)
-  useEffect(() => { api('/api/admin/settings').then(setValues).catch(e => setValues({ denied: e.message })) }, [])
-  if (!values) return <Loading />
-  if (values.denied) return <Empty title="წვდომა შეზღუდულია" detail="პარამეტრების შეცვლა მხოლოდ System Administrator-ს შეუძლია."/>
-  const fields = [['repeatWindowDays','განმეორების ფანჯარა (დღე)'],['commentMaxLength','კომენტარის მაქს. სიგრძე'],['lowScoreThreshold','დაბალი ქულის ზღვარი'],['privacyNotice','კონფიდენციალურობის ტექსტი']]
-  const save = async () => { await api('/api/admin/settings',{method:'PUT',body:JSON.stringify(values)}); setSaved(true); setTimeout(()=>setSaved(false),2500) }
-  return <section className="panel settings-panel"><PanelTitle title="სისტემის პარამეტრები" note="ცვლილებები აუდიტის ჟურნალში ინახება"/><div className="settings-grid">{fields.map(([key,label]) => <label key={key}>{label}{key === 'privacyNotice' ? <textarea value={values[key] || ''} onChange={e => setValues({...values,[key]:e.target.value})}/> : <input value={values[key] || ''} onChange={e => setValues({...values,[key]:e.target.value})}/>}</label>)}</div><button className="primary-button inline" onClick={save}>{saved ? 'შენახულია ✓' : 'ცვლილებების შენახვა'}</button></section>
-}
-
-function Audit() { const [items,setItems]=useState(null); useEffect(()=>{api('/api/admin/audit').then(setItems)},[]); if(!items)return <Loading/>; return <section className="panel table-panel"><div className="table-toolbar"><div><h2>აუდიტის ჟურნალი</h2><p>უსაფრთხოებისა და ადმინისტრირების მოვლენები</p></div></div><DataTable columns={['დრო','მოქმედება','ობიექტი','Correlation ID']} rows={items.map(x=>[formatDateTime(x.timestamp),x.action,`${x.objectType} · ${x.objectId}`,x.correlationId])}/></section> }
 function DataTable({ columns, rows }) { return <div className="table-scroll"><table><thead><tr>{columns.map(x => <th key={x}>{x}</th>)}</tr></thead><tbody>{rows.length ? rows.map((row,i)=><tr key={i}>{row.map((cell,j)=><td key={j}>{cell}</td>)}</tr>) : <tr><td colSpan={columns.length}>მონაცემები არ მოიძებნა</td></tr>}</tbody></table></div> }
 function Loading() { return <div className="loading"><span/><p>მონაცემები იტვირთება…</p></div> }
 function Empty({title,detail}) { return <div className="empty"><h2>{title}</h2><p>{detail}</p></div> }

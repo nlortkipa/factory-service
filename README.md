@@ -4,7 +4,7 @@ End-to-end implementation of the Georgian technical specification:
 
 - `backend/` — ASP.NET Core .NET 10 API with Entity Framework Core, SQL Server production configuration, SQLite development profile, signed QR sessions, direct public surveys, MFA, RBAC, audit, reports, and exports.
 - `frontend/` — responsive React/Vite public survey and administration portal matching the green/navy UI concepts in the specification.
-- `windows-agent/` — .NET 10 Windows Service plus tray companion. The companion requests short-lived QR sessions and sends the QR design directly to the 320×480 Turmo USB panel on COM3.
+- `windows-agent/` — .NET 10 Windows Service plus tray companion. The companion requests short-lived QR sessions, detects the Turmo USB panel's serial port, and sends the QR design directly to its 320×480 display.
 
 ## Local development
 
@@ -13,6 +13,8 @@ Start the API, React frontend, and Turmo QR companion together:
 ```powershell
 .\Start-FactoryService.ps1
 ```
+
+On Windows, you can also double-click `Run-Local.bat` in the repository root.
 
 The command waits for both web applications to become ready before sending the QR display to the Turmo panel. Background output is saved under `.dev/`. To stop the API and frontend processes started by this command:
 
@@ -36,8 +38,17 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173/admin`. Demo credentials are `admin` / `Admin123!`.
-After the password step, read the six-digit development MFA code from the backend terminal; no SMS is sent.
+Open `http://localhost:5173/admin`. Authentication is intentionally bypassed in
+the current test configuration. Set `FactoryService:BypassAdminAuthentication`
+and `VITE_ADMIN_BYPASS` to `false` before using the application with real data.
+
+The Vercel deployment is available at
+`https://factory-service-app.vercel.app/admin`. Vercel does not provide an
+official .NET runtime, so the deployment uses `api/index.js`. Connect a Neon
+Postgres database and expose its connection string as `DATABASE_URL`; the Node
+adapter creates its plant/operator tables automatically. Without a database,
+local development uses resettable in-memory records, while Vercel returns a 503
+for directory operations instead of pretending that an unsaved record persisted.
 
 ### Test from a phone on the same network
 
@@ -58,7 +69,13 @@ Run the Turmo QR companion after the backend is ready:
 dotnet run --project .\windows-agent\src\FactoryService.Companion
 ```
 
-The source-local agent configuration is [`windows-agent/config.json`](./windows-agent/config.json). It contains only `apiBaseUrl` and `operatorId`, is copied beside both executables during build/publish, and is never written to AppData or ProgramData. Create an operator in the administration portal and copy its generated Operator ID into the configuration before starting the companion.
+On first launch, the companion creates a separate configuration for the current
+Windows user at `%LOCALAPPDATA%\Factory Service Agent\config.json`. It contains
+`apiBaseUrl` (initially `http://localhost:5000`) and a blank `operatorId`.
+[`windows-agent/config.example.json`](./windows-agent/config.example.json)
+documents the format. Create an operator in the administration portal and copy
+its generated Operator ID into that user's configuration before starting the
+companion.
 
 ## Production database
 
@@ -78,3 +95,38 @@ dotnet build .\windows-agent\FactoryService.sln
 cd .\frontend
 npm run build
 ```
+
+## Install the Windows agent
+
+Open PowerShell as Administrator and run the agent installer. It publishes
+self-contained executables, installs a delayed-auto Windows Service with restart
+recovery, registers the companion for every user logon, and starts both now:
+
+```powershell
+.\windows-agent\scripts\install.ps1
+```
+
+Each user's first companion launch creates an independent configuration at
+`%LOCALAPPDATA%\Factory Service Agent\config.json`. The production package does
+not include a shared or default configuration; each user fills in the API URL
+and Operator ID in their own file.
+
+The installer disables (but does not delete) the vendor
+`TURMO_ScheduleTask`, because `TURMO.exe` and the factory companion cannot both
+own the panel's serial port. Re-enable that task if you later uninstall this companion and want the
+vendor application to start at login again.
+
+### Send the client to another PC
+
+Build the dependency-free Windows x64 ZIP with:
+
+```powershell
+.\windows-agent\scripts\package-client.ps1
+```
+
+On Windows, double-click `Create-Production-Client-Zip.bat` to run the same
+Release packaging flow and write the ZIP under `windows-agent\dist`.
+
+Send `windows-agent\dist\FactoryServiceClient-win-x64.zip`. The recipient only
+needs to extract it and double-click `Install.cmd`; the package contains the
+self-contained .NET runtime and is already configured for the hosted test API.

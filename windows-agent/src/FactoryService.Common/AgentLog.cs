@@ -6,7 +6,7 @@ public static class AgentLog
 
     public static void Machine(string message)
     {
-        string directory = Path.Combine(AgentConfigStore.ConfigDirectory, "logs");
+        string directory = Path.Combine(AgentConfigStore.MachineDataDirectory, "logs");
         Append(directory, "service.log", message);
     }
 

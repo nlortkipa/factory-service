@@ -73,10 +73,20 @@ public sealed class PortalAuthenticationHandler(
     IOptionsMonitor<AuthenticationSchemeOptions> options,
     ILoggerFactory logger,
     UrlEncoder encoder,
-    FactoryDbContext db) : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
+    FactoryDbContext db,
+    IOptions<FactoryOptions> factoryOptions) : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
 {
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
     {
+        if (factoryOptions.Value.BypassAdminAuthentication)
+        {
+            PortalUser? testAdministrator = await db.PortalUsers
+                .OrderBy(x => x.Username)
+                .FirstOrDefaultAsync(x => x.IsActive && x.Role == PortalRole.SystemAdministrator);
+            if (testAdministrator is null) return AuthenticateResult.Fail("No active test administrator is available.");
+            return Success(testAdministrator);
+        }
+
         string header = Request.Headers.Authorization.ToString();
         if (!header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)) return AuthenticateResult.NoResult();
         string hash = SecureHash.Sha256(header[7..].Trim());
@@ -94,6 +104,11 @@ public sealed class PortalAuthenticationHandler(
 
         session.LastSeen = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
+        return Success(user);
+    }
+
+    private AuthenticateResult Success(PortalUser user)
+    {
         var claims = new List<Claim>
         {
             new(ClaimTypes.NameIdentifier, user.Id.ToString()),
