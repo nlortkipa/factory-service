@@ -2,7 +2,6 @@ using FactoryService.Api.Domain;
 
 namespace FactoryService.Api.Contracts;
 
-public sealed record LoginRequest(string Username, string Password);
 public sealed record VerifyMfaRequest(Guid ChallengeId, string Code);
 public sealed record AgentQrRequest(string OperatorId);
 public sealed record RatingInput(ServiceType ServiceType, int Score, string? Comment);

@@ -5,8 +5,7 @@ namespace FactoryService.Companion;
 
 internal sealed class CompanionApplicationContext : ApplicationContext
 {
-    private readonly AgentConfig _config;
-    private readonly AgentApiClient _api;
+    private AgentConfig _config;
     private readonly NotifyIcon _trayIcon;
     private readonly Control _uiDispatcher;
     private readonly System.Windows.Forms.Timer _refreshTimer;
@@ -16,7 +15,6 @@ internal sealed class CompanionApplicationContext : ApplicationContext
     {
         try { _config = AgentConfigStore.EnsureExists(); }
         catch (Exception exception) { AgentLog.User($"configuration load failed; using defaults: {exception}"); _config = new AgentConfig(); }
-        _api = new AgentApiClient(_config);
 
         var menu = new ContextMenuStrip();
         menu.Items.Add("Refresh Turmo QR", null, async (_, _) => await RefreshQrAsync());
@@ -53,7 +51,7 @@ internal sealed class CompanionApplicationContext : ApplicationContext
         if (_refreshing) return; _refreshing = true;
         try
         {
-            AgentQrResponse response = await _api.RequestQrAsync();
+            AgentQrResponse response = await RequestQrAsync();
             await TurmoPanelDisplay.ShowQrAsync(response);
             AgentLog.User($"Turmo QR refreshed; expires={response.ExpiresAt:O}; operator={response.OperatorName}");
         }
@@ -77,16 +75,39 @@ internal sealed class CompanionApplicationContext : ApplicationContext
     {
         try
         {
-            AgentQrResponse response = await _api.RequestQrAsync();
+            AgentQrResponse response = await RequestQrAsync();
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(response.SurveyUrl) { UseShellExecute = true });
         }
         catch (Exception exception) { MessageBox.Show(exception.Message, "Factory Service", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
     }
 
+    private async Task<AgentQrResponse> RequestQrAsync()
+    {
+        ReloadConfiguration();
+        using var api = new AgentApiClient(_config);
+        return await api.RequestQrAsync();
+    }
+
+    private void ReloadConfiguration()
+    {
+        try
+        {
+            AgentConfig latestConfig = AgentConfigStore.LoadOrDefault();
+            if (latestConfig == _config) return;
+
+            _config = latestConfig;
+            AgentLog.User($"configuration reloaded; operator={_config.OperatorId}; config={AgentConfigStore.ConfigPath}");
+        }
+        catch (Exception exception)
+        {
+            AgentLog.User($"configuration reload failed; keeping last valid configuration: {exception}");
+        }
+    }
+
     protected override void ExitThreadCore()
     {
         SystemEvents.SessionSwitch -= OnSessionSwitch; _refreshTimer.Stop(); _refreshTimer.Dispose();
-        _trayIcon.Visible = false; _trayIcon.Dispose(); _uiDispatcher.Dispose(); _api.Dispose();
+        _trayIcon.Visible = false; _trayIcon.Dispose(); _uiDispatcher.Dispose();
         AgentLog.User("companion stopped"); base.ExitThreadCore();
     }
 }

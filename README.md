@@ -8,7 +8,8 @@ End-to-end implementation of the Georgian technical specification:
 
 ## Local development
 
-Start the API, React frontend, and Turmo QR companion together:
+Start the API, React frontend, Windows service in console mode, and Turmo QR
+companion together:
 
 ```powershell
 .\Start-FactoryService.ps1
@@ -16,7 +17,9 @@ Start the API, React frontend, and Turmo QR companion together:
 
 On Windows, you can also double-click `Run-Local.bat` in the repository root.
 
-The command waits for both web applications to become ready before sending the QR display to the Turmo panel. Background output is saved under `.dev/`. To stop the API and frontend processes started by this command:
+The command waits for both web applications to become ready before starting the
+client. Background output is saved under `.dev/`. To stop every process started
+by this command:
 
 ```powershell
 .\Stop-FactoryService.ps1
@@ -38,9 +41,17 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173/admin`. Authentication is intentionally bypassed in
-the current test configuration. Set `FactoryService:BypassAdminAuthentication`
-and `VITE_ADMIN_BYPASS` to `false` before using the application with real data.
+Open `http://localhost:5173/admin`. Administrator login uses the six-digit SMS
+code sent through SMS Office; no username or password is required. Copy `.env.example` to
+`.env.local`, set `SMS_KEY`, `SMS_SENDER`, `AUTH_SIGNING_KEY`, `ADMIN_PHONE`, and
+then start the application with `Start-FactoryService.ps1`.
+Set `VITE_ADMIN_BYPASS=true` only when an explicit local authentication bypass is
+needed.
+
+For the Turmo companion in development, set `FACTORY_SERVICE_DEV_OPERATOR_ID` in
+`.env.local` to an operator ID that exists in the local database. The development
+launcher keeps the saved production client configuration untouched and overrides
+the companion process to use `http://localhost:5000`.
 
 The Vercel deployment is available at
 `https://factory-service-app.vercel.app/admin`. Vercel does not provide an
@@ -96,27 +107,7 @@ cd .\frontend
 npm run build
 ```
 
-## Install the Windows agent
-
-Open PowerShell as Administrator and run the agent installer. It publishes
-self-contained executables, installs a delayed-auto Windows Service with restart
-recovery, registers the companion for every user logon, and starts both now:
-
-```powershell
-.\windows-agent\scripts\install.ps1
-```
-
-Each user's first companion launch creates an independent configuration at
-`%LOCALAPPDATA%\Factory Service Agent\config.json`. The production package does
-not include a shared or default configuration; each user fills in the API URL
-and Operator ID in their own file.
-
-The installer disables (but does not delete) the vendor
-`TURMO_ScheduleTask`, because `TURMO.exe` and the factory companion cannot both
-own the panel's serial port. Re-enable that task if you later uninstall this companion and want the
-vendor application to start at login again.
-
-### Send the client to another PC
+## Build and install the Windows client
 
 Build the dependency-free Windows x64 ZIP with:
 
@@ -129,4 +120,11 @@ Release packaging flow and write the ZIP under `windows-agent\dist`.
 
 Send `windows-agent\dist\FactoryServiceClient-win-x64.zip`. The recipient only
 needs to extract it and double-click `Install.cmd`; the package contains the
-self-contained .NET runtime and is already configured for the hosted test API.
+self-contained .NET runtime. Each user then fills in the API URL and Operator ID
+in `%LOCALAPPDATA%\Factory Service Agent\config.json`.
+
+The installer creates a delayed-auto Windows Service with restart recovery and
+registers the companion for every user logon. It disables (but does not delete)
+the vendor `TURMO_ScheduleTask`, because `TURMO.exe` and the factory companion
+cannot both own the panel's serial port. `Uninstall.cmd` reverses those startup
+changes.

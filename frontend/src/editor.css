@@ -14,6 +14,41 @@
 .row-action.delete:hover { border-color: #b42318; background: #fff7f6; }
 .directory-error { margin: 0; padding: 12px 25px; border-bottom: 1px solid #f0d1cd; background: #fff7f6; color: #b42318; font-size: .72rem; font-weight: 700; }
 
+.response-filters,
+.directory-filters {
+  position: relative;
+  align-items: end;
+  border-left: 4px solid var(--green);
+}
+
+.response-filters label { flex: 1 1 130px; }
+.directory-filters label { flex: 1 1 220px; }
+.directory-filters.plant-filters label { max-width: 420px; }
+
+.filter-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.filter-clear {
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fff;
+  color: #536978;
+  font-size: .68rem;
+  font-weight: 800;
+}
+
+.filter-clear:hover { border-color: #9fb3bf; color: var(--navy); }
+.filter-error { margin: -12px 0 18px; border: 1px solid #f0d1cd; border-radius: 10px; }
+.response-table.is-loading { opacity: .62; transition: opacity .16s ease; }
+.response-delete { white-space: nowrap; }
+.row-action:disabled, .small-button:disabled { opacity: .55; cursor: wait; }
+
 .modal-backdrop {
   position: fixed;
   inset: 0;
@@ -45,6 +80,12 @@
 .editor-modal > footer > span { flex: 1; }
 
 @media (max-width: 580px) {
+  .response-filters,
+  .directory-filters { align-items: stretch; }
+  .response-filters label,
+  .directory-filters label,
+  .directory-filters.plant-filters label { min-width: 190px; max-width: none; }
+  .filter-actions { min-width: max-content; margin-left: 0; }
   .modal-backdrop { padding: 0; }
   .editor-modal { min-height: 100vh; max-height: 100vh; border-radius: 0; }
   .editor-grid { grid-template-columns: 1fr; }

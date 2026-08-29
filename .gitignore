@@ -3,11 +3,10 @@
 **/obj/
 *.user
 *.suo
-**/.vs/
+.vs/
 
 # Frontend
 node_modules/
-frontend/node_modules/
 frontend/dist/
 .npm-cache/
 
@@ -28,8 +27,5 @@ specification.zip
 
 .vercel
 .env*
+!.env.example
 windows-agent/dist/
-windows-agent/client-package/install-client.ps1
-windows-agent/client-package/uninstall-client.ps1
-
-.env*

@@ -51,7 +51,6 @@ start "" "%COMPANION_EXE%"
 
 echo.
 echo Factory Service Client installed successfully.
-echo Server: https://factory-service-app.vercel.app
 echo It will start automatically with Windows and user login.
 pause
 exit /b 0

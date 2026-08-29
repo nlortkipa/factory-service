@@ -10,14 +10,33 @@ if (-not (Test-Path -LiteralPath $stateFile)) {
     exit 0
 }
 
-$records = @(Get-Content -LiteralPath $stateFile -Raw | ConvertFrom-Json)
+$records = Get-Content -LiteralPath $stateFile -Raw | ConvertFrom-Json
 foreach ($record in $records) {
+    if (
+        $null -eq $record.PSObject.Properties["Kind"] -or
+        $null -eq $record.PSObject.Properties["Pid"] -or
+        $null -eq $record.PSObject.Properties["StartedAtUtc"]
+    ) {
+        continue
+    }
+
     $process = Get-Process -Id $record.Pid -ErrorAction SilentlyContinue
     if ($null -eq $process) {
         continue
     }
 
-    $recordedStart = [DateTimeOffset]::Parse($record.StartedAtUtc).UtcDateTime
+    try {
+        $recordedStart = if ($record.StartedAtUtc -is [DateTime]) {
+            $record.StartedAtUtc.ToUniversalTime()
+        }
+        else {
+            [DateTimeOffset]::Parse($record.StartedAtUtc).UtcDateTime
+        }
+    }
+    catch {
+        Write-Warning "Skipped invalid $($record.Kind) state for PID $($record.Pid)."
+        continue
+    }
     $actualStart = $process.StartTime.ToUniversalTime()
     if ([Math]::Abs(($actualStart - $recordedStart).TotalSeconds) -gt 2) {
         Write-Warning "Skipped PID $($record.Pid): it has been reused by another process."

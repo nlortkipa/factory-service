@@ -4,6 +4,7 @@ using FactoryService.Api.Contracts;
 using FactoryService.Api.Data;
 using FactoryService.Api.Endpoints;
 using FactoryService.Api.Security;
+using FactoryService.Api.Services;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.EntityFrameworkCore;
 
@@ -20,6 +21,7 @@ builder.Services.AddDbContext<FactoryDbContext>(options =>
 });
 
 builder.Services.AddSingleton<QrTokenService>();
+builder.Services.AddHttpClient<SmsGateway>();
 builder.Services.AddAuthentication("Portal")
     .AddScheme<AuthenticationSchemeOptions, PortalAuthenticationHandler>("Portal", _ => { });
 builder.Services.AddAuthorizationBuilder()

@@ -54,6 +54,12 @@ Operator ID into the appropriate user's file. The companion requests
 short-lived, backend-signed QR sessions for that operator and never contains the
 backend signing key.
 
+The companion reloads `config.json` before every QR request. Changes therefore
+take effect on the next one-minute refresh, a tray-menu refresh, or immediately
+after locking and unlocking Windows (`Win+L`). A new Windows login also starts
+the companion with the latest configuration; restarting the whole PC is not
+required.
+
 Logs are written to:
 
 ```text
@@ -61,26 +67,21 @@ Logs are written to:
 %LOCALAPPDATA%\Factory Service Agent\logs\companion.log
 ```
 
-## Install
+## Package and install
 
-From an elevated PowerShell window:
+Build the self-contained Windows x64 package from the repository root:
 
 ```powershell
-.\scripts\install.ps1
+.\Create-Production-Client-Zip.bat
 ```
 
-The installer publishes both executables as self-contained Windows applications,
-installs the service with automatic
+Extract `dist\FactoryServiceClient-win-x64.zip` and double-click `Install.cmd`.
+The packaged installer installs the service with automatic
 startup, registers the companion for every user's logon through the machine-wide
 Windows Run key, and launches the companion for the current session. Each signed-in
 user therefore receives a separate companion in that user's interactive session.
 Because the companion stays running, it can show the QR again after every unlock.
 
-To remove the service and companion startup entry:
-
-```powershell
-.\scripts\uninstall.ps1
-```
-
-The uninstall script deliberately leaves installed files and each user's
+Double-click `Uninstall.cmd` from the extracted package to remove the service
+and companion startup entry. The uninstaller deliberately leaves installed files and each user's
 configuration in place so they can be recovered or inspected.

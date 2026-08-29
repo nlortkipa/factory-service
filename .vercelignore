@@ -14,4 +14,3 @@ frontend/dist
 *.db
 *.db-shm
 *.db-wal
-Install-FactoryService.safe.ps1

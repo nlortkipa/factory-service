@@ -7,6 +7,12 @@ const configuredOperatorId = '07IdLcVyn4q-s77Or8GldZwg_BsoQzSM'
 const adminId = '8ba2d8b7-a558-4372-ae92-78cbe9428549'
 const serviceTypes = ['Sales', 'Scale', 'Loading']
 const signingKey = process.env.QR_SIGNING_KEY || 'factory-service-vercel-test-signing-key-change-before-production'
+const smsKey = (process.env.SMS_KEY || '').trim()
+const smsSender = (process.env.SMS_SENDER || 'Beton.ge').trim()
+const authSigningKey = process.env.AUTH_SIGNING_KEY || smsKey || signingKey
+const adminUsername = process.env.ADMIN_USERNAME || 'admin'
+const adminPhone = (process.env.ADMIN_PHONE || '').trim()
+const adminDisplayName = process.env.ADMIN_DISPLAY_NAME || 'System Administrator'
 const repeatWindowDays = 7
 const repeatWindowMs = repeatWindowDays * 86400000
 const qrLifetimeMs = 60 * 1000
@@ -26,6 +32,7 @@ let ratings = createDemoRatings()
 const idempotencyKeys = new Map()
 const completedSessions = new Set()
 const deviceResponses = []
+const mfaAttempts = new Map()
 
 function createDemoRatings() {
   const scores = [[5, 4, 5], [4, 4, 3], [5, 5, 4], [3, 4, 4], [4, 5, 5]]
@@ -72,20 +79,83 @@ function audit(action, objectType, objectId) {
   audits = audits.slice(0, 500)
 }
 
-function sign(payload) {
+function signWithKey(payload, key) {
   const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url')
-  const signature = crypto.createHmac('sha256', signingKey).update(encoded).digest('base64url')
+  const signature = crypto.createHmac('sha256', key).update(encoded).digest('base64url')
   return `${encoded}.${signature}`
 }
 
-function verify(token) {
+function verifyWithKey(token, key) {
   const [encoded, signature] = String(token || '').split('.', 2)
   if (!encoded || !signature) return null
-  const expected = crypto.createHmac('sha256', signingKey).update(encoded).digest()
+  const expected = crypto.createHmac('sha256', key).update(encoded).digest()
   let actual
   try { actual = Buffer.from(signature, 'base64url') } catch { return null }
   if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) return null
   try { return JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) } catch { return null }
+}
+
+function sign(payload) {
+  return signWithKey(payload, signingKey)
+}
+
+function verify(token) {
+  return verifyWithKey(token, signingKey)
+}
+
+function fixedEquals(left, right) {
+  const leftBuffer = Buffer.from(String(left))
+  const rightBuffer = Buffer.from(String(right))
+  return leftBuffer.length === rightBuffer.length && crypto.timingSafeEqual(leftBuffer, rightBuffer)
+}
+
+function maskPhone(phone) {
+  const digits = String(phone).replace(/\D/g, '')
+  const local = digits.startsWith('995') && digits.length === 12 ? digits.slice(3) : digits
+  return local.length >= 3 ? `+995\u2022\u2022\u2022${local.slice(-3)}` : '\u2022\u2022\u2022'
+}
+
+function smsDestination(phone) {
+  const digits = String(phone).replace(/\D/g, '')
+  return digits.length === 9 && digits.startsWith('5') ? `995${digits}` : digits
+}
+
+async function sendSmsCode(phone, code) {
+  if (!smsKey) throw new Error('SMS_KEY is not configured')
+  if (!smsSender || smsSender.length > 11) throw new Error(`SMS_SENDER must be a registered sender with at most 11 characters (received ${smsSender.length})`)
+  const destination = smsDestination(phone)
+  if (!/^9955\d{8}$/.test(destination)) throw new Error('ADMIN_PHONE is not configured')
+  const url = new URL('https://smsoffice.ge/api/v2/send/')
+  url.searchParams.set('key', smsKey)
+  url.searchParams.set('destination', destination)
+  url.searchParams.set('sender', smsSender)
+  url.searchParams.set('content', code)
+  url.searchParams.set('urgent', 'true')
+  const result = await fetch(url, { signal: AbortSignal.timeout(10000) })
+  if (!result.ok) throw new Error(`SMS provider returned HTTP ${result.status}`)
+  const payload = await result.json().catch(() => null)
+  if (!payload?.Success || Number(payload.ErrorCode) !== 0) {
+    throw new Error(`SMS provider rejected the request (code ${payload?.ErrorCode ?? 'unknown'}): ${payload?.Message || 'Unknown error'}`)
+  }
+}
+
+function createMfaChallenge(code) {
+  const nonce = crypto.randomBytes(18).toString('base64url')
+  const expiresAt = Date.now() + 5 * 60 * 1000
+  const codeMac = crypto.createHmac('sha256', authSigningKey).update(`${nonce}:${code}`).digest('base64url')
+  const challengeId = signWithKey({ type: 'admin-mfa', username: adminUsername, nonce, codeMac, expiresAt }, authSigningKey)
+  return { challengeId, nonce, expiresAt }
+}
+
+function authenticatedAdmin(request) {
+  const authorization = String(request.headers.authorization || '')
+  if (!authorization.toLowerCase().startsWith('bearer ')) return null
+  const payload = verifyWithKey(authorization.slice(7).trim(), authSigningKey)
+  return payload?.type === 'admin-session' && payload.username === adminUsername && payload.expiresAt > Date.now() ? payload : null
+}
+
+function adminUser() {
+  return { id: adminId, username: adminUsername, displayName: adminDisplayName, role: 'SystemAdministrator', plantId: null, plant: null }
 }
 
 function publicBaseUrl(request) {
@@ -127,7 +197,34 @@ function filteredRatings(items, query) {
       && (!query.operatorId || (item.operatorId === query.operatorId && item.serviceType === 'Sales'))
       && (!query.serviceType || item.serviceType === query.serviceType)
       && (!query.score || item.score === Number(query.score))
-      && (!query.search || item.comment.toLocaleLowerCase().includes(String(query.search).toLocaleLowerCase()))
+  })
+}
+
+function responseRows(items, query) {
+  const from = query.from ? new Date(query.from).getTime() : Date.now() - 30 * 86400000
+  const to = query.to ? new Date(query.to).getTime() + 86400000 : Date.now() + 86400000
+  return [...Map.groupBy(items, item => item.responseId).values()].filter(group => {
+    const first = group[0]
+    const time = new Date(first.submittedAt).getTime()
+    const ratingMatch = item => (!query.serviceType || item.serviceType === query.serviceType)
+      && (!query.score || item.score === Number(query.score))
+    return time >= from && time < to
+      && (!query.plantId || first.plantId === query.plantId)
+      && (!query.operatorId || first.operatorId === query.operatorId)
+      && ((!query.serviceType && !query.score) || group.some(ratingMatch))
+  }).map(group => {
+    const first = group[0]
+    const rating = type => group.find(item => item.serviceType === type)
+    const score = type => rating(type)?.score || 0
+    const comment = type => rating(type)?.comment?.trim() || ''
+    const comments = [...new Set(group.map(item => item.comment.trim()).filter(Boolean))]
+    return {
+      id: first.responseId, submittedAt: first.submittedAt, plant: first.plant, operator: first.operator,
+      loadingScore: score('Loading'), loadingComment: comment('Loading'),
+      salesScore: score('Sales'), salesComment: comment('Sales'),
+      scaleScore: score('Scale'), scaleComment: comment('Scale'),
+      comment: comments.join(' • ')
+    }
   })
 }
 
@@ -157,7 +254,7 @@ function dashboard(allRatings, query) {
 
 function exportCsv(items) {
   const escape = value => `"${String(value ?? '').replaceAll('"', '""')}"`
-  const rows = [['Submitted at', 'Plant', 'Operator', 'Service', 'Score', 'Comment'], ...items.map(item => [item.submittedAt, item.plant, item.operator, item.serviceType, item.score, item.comment])]
+  const rows = [['თარიღი', 'ქარხანა', 'ოპერატორი', 'დატვირთვის მომსახურება', 'გაყიდვების ოპერატორი', 'სასწორის მომსასხურება', 'კომენტარი'], ...items.map(item => [item.submittedAt, item.plant, item.operator, item.loadingScore, item.salesScore, item.scaleScore, item.comment])]
   return '\ufeff' + rows.map(row => row.map(escape).join(',')).join('\r\n')
 }
 
@@ -173,7 +270,7 @@ export default async function handler(request, response) {
   const method = request.method || 'GET'
   const input = body(request)
   const directoryStore = getDirectoryStore()
-  const needsDirectory = path === 'agent/qr' || path.startsWith('survey/') || path === 'admin/dashboard' || path === 'admin/responses' || path.startsWith('admin/exports/') || path === 'admin/plants' || path.startsWith('admin/plants/') || path === 'admin/operators' || path.startsWith('admin/operators/')
+  const needsDirectory = path === 'auth/login' || path === 'auth/verify' || path === 'agent/qr' || path.startsWith('survey/') || path === 'admin/dashboard' || path === 'admin/responses' || path.startsWith('admin/responses/') || path.startsWith('admin/exports/') || path === 'admin/plants' || path.startsWith('admin/plants/') || path === 'admin/operators' || path.startsWith('admin/operators/')
 
   if (process.env.VERCEL && needsDirectory && !directoryStore) {
     console.error('[directory] DATABASE_URL is not configured')
@@ -181,10 +278,51 @@ export default async function handler(request, response) {
   }
 
   if (path === 'health' && method === 'GET') return json(response, 200, { status: 'ok', mode: 'vercel-node-adapter', directoryStorage: directoryStore ? 'postgres' : 'memory', time: new Date().toISOString() })
-  if (path === 'auth/me' && method === 'GET') return json(response, 200, { id: adminId, username: 'admin', displayName: 'Test Administrator', role: 'SystemAdministrator', plantId: null, plant: null })
-  if (path === 'auth/login' && method === 'POST') return json(response, 200, { challengeId: crypto.randomUUID(), phoneMasked: '+995\u2022\u2022\u2022001', expiresAt: new Date(Date.now() + 300000).toISOString() })
-  if (path === 'auth/verify' && method === 'POST') return json(response, 200, { token: 'test-admin', user: { id: adminId, username: 'admin', displayName: 'Test Administrator', role: 'SystemAdministrator' } })
+  if (path === 'auth/login' && method === 'POST') {
+    const code = crypto.randomInt(0, 1_000_000).toString().padStart(6, '0')
+    const challenge = createMfaChallenge(code)
+    try {
+      await sendSmsCode(adminPhone, code)
+      if (directoryStore) await directoryStore.createMfaChallenge({ nonce: challenge.nonce, codeMac: verifyWithKey(challenge.challengeId, authSigningKey).codeMac, expiresAt: new Date(challenge.expiresAt).toISOString() })
+    } catch (error) {
+      console.error('[sms] Failed to send administrator MFA code:', error instanceof Error ? error.message : 'unknown error')
+      return json(response, 502, { message: 'SMS \u10d9\u10dd\u10d3\u10d8\u10e1 \u10d2\u10d0\u10d2\u10d6\u10d0\u10d5\u10dc\u10d0 \u10d5\u10d4\u10e0 \u10db\u10dd\u10ee\u10d4\u10e0\u10ee\u10d3\u10d0. \u10d2\u10d7\u10ee\u10dd\u10d5\u10d7 \u10e1\u10ea\u10d0\u10d3\u10dd\u10d7 \u10ee\u10d4\u10da\u10d0\u10ee\u10da\u10d0.' })
+    }
+    if (!directoryStore) {
+      mfaAttempts.set(challenge.nonce, { attempts: 0, used: false, expiresAt: challenge.expiresAt })
+      for (const [nonce, state] of mfaAttempts) if (state.expiresAt <= Date.now()) mfaAttempts.delete(nonce)
+    }
+    return json(response, 200, { challengeId: challenge.challengeId, phoneMasked: maskPhone(adminPhone), expiresAt: new Date(challenge.expiresAt).toISOString() })
+  }
+  if (path === 'auth/verify' && method === 'POST') {
+    const challenge = verifyWithKey(input.challengeId, authSigningKey)
+    if (challenge?.type !== 'admin-mfa' || challenge.username !== adminUsername || challenge.expiresAt <= Date.now() || !/^\d{6}$/.test(String(input.code || ''))) {
+      return json(response, 400, { message: '\u10d9\u10dd\u10d3\u10d8 \u10d0\u10e0\u10d0\u10e1\u10ec\u10dd\u10e0\u10d8\u10d0 \u10d0\u10dc \u10d5\u10d0\u10d3\u10d0 \u10d2\u10d0\u10e3\u10d5\u10d8\u10d3\u10d0.' })
+    }
+    const codeMac = crypto.createHmac('sha256', authSigningKey).update(`${challenge.nonce}:${String(input.code)}`).digest('base64url')
+    let verification
+    if (directoryStore) {
+      verification = await directoryStore.consumeMfaChallenge(challenge.nonce, codeMac)
+    } else {
+      const state = mfaAttempts.get(challenge.nonce)
+      if (state && !state.used && state.attempts < 5) {
+        state.attempts += 1
+        const valid = fixedEquals(codeMac, challenge.codeMac)
+        if (valid) state.used = true
+        verification = { valid, attemptsRemaining: 5 - state.attempts }
+      }
+    }
+    if (!verification?.valid) {
+      return json(response, 400, { message: '\u10d9\u10dd\u10d3\u10d8 \u10d0\u10e0\u10d0\u10e1\u10ec\u10dd\u10e0\u10d8\u10d0 \u10d0\u10dc \u10d5\u10d0\u10d3\u10d0 \u10d2\u10d0\u10e3\u10d5\u10d8\u10d3\u10d0.', attemptsRemaining: verification?.attemptsRemaining })
+    }
+    const token = signWithKey({ type: 'admin-session', username: adminUsername, expiresAt: Date.now() + 8 * 60 * 60 * 1000 }, authSigningKey)
+    return json(response, 200, { token, user: adminUser() })
+  }
   if (path === 'auth/logout' && method === 'POST') return noContent(response)
+
+  const adminSession = path === 'auth/me' || path.startsWith('admin/') ? authenticatedAdmin(request) : null
+  if ((path === 'auth/me' || path.startsWith('admin/')) && !adminSession) return json(response, 401, { message: '\u10d0\u10d5\u10e2\u10dd\u10e0\u10d8\u10d6\u10d0\u10ea\u10d8\u10d0 \u10e1\u10d0\u10ed\u10d8\u10e0\u10dd\u10d0.' })
+  if (path === 'auth/me' && method === 'GET') return json(response, 200, adminUser())
 
   if (path === 'agent/qr' && method === 'POST') {
     const requestedOperatorId = String(input.operatorId || '').trim()
@@ -251,15 +389,25 @@ export default async function handler(request, response) {
   }
   if (path === 'admin/responses' && method === 'GET') {
     const allRatings = directoryStore ? normalizedRatings(await directoryStore.listRatings()) : ratings
-    const items = filteredRatings(allRatings, request.query || {})
+    const items = responseRows(allRatings, request.query || {})
     const page = Math.max(1, Number(request.query.page || 1))
     const pageSize = Math.min(200, Math.max(1, Number(request.query.pageSize || 50)))
     return json(response, 200, { total: items.length, page, pageSize, items: items.sort((a, b) => b.submittedAt.localeCompare(a.submittedAt)).slice((page - 1) * pageSize, page * pageSize) })
   }
+  if (path.startsWith('admin/responses/') && method === 'DELETE') {
+    const id = parseGuidPath(path, 'admin/responses/')
+    const exists = directoryStore
+      ? await directoryStore.deleteResponse(id)
+      : ratings.some(item => item.responseId === id)
+    if (!exists) return json(response, 404, { message: 'შეფასება ვერ მოიძებნა.' })
+    if (!directoryStore) ratings = ratings.filter(item => item.responseId !== id)
+    audit('Delete', 'SurveyResponse', id)
+    return noContent(response)
+  }
   if (path.startsWith('admin/exports/') && method === 'GET') {
     const format = parseGuidPath(path, 'admin/exports/').toLowerCase()
     const allRatings = directoryStore ? normalizedRatings(await directoryStore.listRatings()) : ratings
-    const content = exportCsv(filteredRatings(allRatings, request.query || {}))
+    const content = exportCsv(responseRows(allRatings, request.query || {}))
     response.status(200).setHeader('Content-Type', format === 'xlsx' ? 'application/vnd.ms-excel; charset=utf-8' : 'text/csv; charset=utf-8')
     response.setHeader('Content-Disposition', `attachment; filename="factory-service-report.${format === 'xlsx' ? 'xls' : 'csv'}"`)
     return response.end(content)
@@ -282,7 +430,7 @@ export default async function handler(request, response) {
     }
     if (method === 'DELETE') {
       const hasOperators = directoryStore ? await directoryStore.plantHasOperators(id) : operators.some(item => item.plantId === id)
-      if (hasOperators) return json(response, 409, { message: 'ქარხანა დაკავშირებულია ოპერატორთან.' })
+      if (hasOperators) return json(response, 409, { message: 'ქარხანა დაკავშირებულია ოპერატორთან და ვერ წაიშლება.' })
       if (directoryStore) await directoryStore.deletePlant(id)
       else plants = plants.filter(item => item.id !== id)
       audit('Delete', 'Plant', id); return noContent(response)

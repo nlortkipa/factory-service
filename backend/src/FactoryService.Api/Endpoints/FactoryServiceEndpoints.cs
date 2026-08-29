@@ -25,25 +25,31 @@ public static class FactoryServiceEndpoints
 
     private static void MapAuth(RouteGroupBuilder group)
     {
-        group.MapPost("/login", async (LoginRequest request, FactoryDbContext db, ILogger<Program> logger, HttpContext context) =>
+        group.MapPost("/login", async (FactoryDbContext db, SmsGateway smsGateway, ILogger<Program> logger) =>
         {
-            string username = request.Username.Trim().ToLowerInvariant();
-            PortalUser? user = await db.PortalUsers.SingleOrDefaultAsync(x => x.Username.ToLower() == username && x.IsActive);
-            if (user is null || !SecureHash.VerifyPassword(request.Password, user.PasswordHash, user.PasswordSalt))
-            {
-                await AuditAsync(db, null, "LoginFailure", "PortalUser", username, "", "", context);
-                return Results.Unauthorized();
-            }
+            PortalUser? user = await db.PortalUsers
+                .OrderBy(x => x.Username)
+                .FirstOrDefaultAsync(x => x.IsActive && x.Role == PortalRole.SystemAdministrator);
+            if (user is null)
+                return Results.Problem("აქტიური ადმინისტრატორი ვერ მოიძებნა.", statusCode: StatusCodes.Status503ServiceUnavailable);
 
             string code = RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6");
             var challenge = new MfaChallenge
             {
                 UserId = user.Id, PhoneMasked = MaskPhone(user.Phone), CodeHash = SecureHash.Sha256(code),
-                CreatedAt = DateTimeOffset.UtcNow, ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5)
+                CreatedAt = DateTimeOffset.UtcNow, ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5), SendStatus = "Sent"
             };
+            try
+            {
+                await smsGateway.SendCodeAsync(user.Phone, code);
+            }
+            catch (Exception exception)
+            {
+                logger.LogError(exception, "Failed to send an administrator MFA code through the SMS provider.");
+                return Results.Problem("SMS კოდის გაგზავნა ვერ მოხერხდა. გთხოვთ სცადოთ ხელახლა.", statusCode: StatusCodes.Status502BadGateway);
+            }
             db.MfaChallenges.Add(challenge);
             await db.SaveChangesAsync();
-            logger.LogWarning("[SMS DEV] MFA code for {Username} ({Phone}) is {Code}. This is logged instead of being sent.", user.Username, user.Phone, code);
             return Results.Ok(new { challengeId = challenge.Id, challenge.PhoneMasked, challenge.ExpiresAt });
         });
 
@@ -220,6 +226,16 @@ public static class FactoryServiceEndpoints
     {
         group.MapGet("/dashboard", DashboardAsync).RequireAuthorization("Reports");
         group.MapGet("/responses", ResponsesAsync).RequireAuthorization("Reports");
+        group.MapDelete("/responses/{id:guid}", async (Guid id, FactoryDbContext db, ClaimsPrincipal user, HttpContext context) =>
+        {
+            SurveyResponse? entity = await db.SurveyResponses.Include(x => x.Ratings).SingleOrDefaultAsync(x => x.Id == id);
+            if (entity is null) return Results.NotFound(new { message = "შეფასება ვერ მოიძებნა." });
+            string before = JsonSerializer.Serialize(new { entity.Id, entity.SubmittedAt, entity.PlantId, entity.OperatorId, Ratings = entity.Ratings.Select(x => new { x.ServiceType, x.Score, x.Comment }) });
+            db.SurveyResponses.Remove(entity);
+            await db.SaveChangesAsync();
+            await AuditAsync(db, user.UserId(), "Delete", "SurveyResponse", id.ToString(), before, "", context);
+            return Results.NoContent();
+        }).RequireAuthorization("SystemAdmin");
         group.MapGet("/exports/{format}", ExportAsync).RequireAuthorization("Reports");
 
         group.MapGet("/plants", async (FactoryDbContext db, ClaimsPrincipal user) =>
@@ -243,8 +259,9 @@ public static class FactoryServiceEndpoints
         group.MapDelete("/plants/{id:guid}", async (Guid id, FactoryDbContext db, ClaimsPrincipal user, HttpContext context) =>
         {
             if (!user.IsSystemAdmin()) return Results.Forbid(); Plant? entity = await db.Plants.FindAsync(id); if (entity is null) return Results.NotFound();
-            bool isUsed = await db.Operators.AnyAsync(x => x.PlantId == id)
-                || await db.QrSessions.AnyAsync(x => x.PlantId == id)
+            bool hasOperators = await db.Operators.AnyAsync(x => x.PlantId == id);
+            if (hasOperators) return Results.Conflict(new { message = "ქარხანა დაკავშირებულია ოპერატორთან და ვერ წაიშლება." });
+            bool isUsed = await db.QrSessions.AnyAsync(x => x.PlantId == id)
                 || await db.SurveyResponses.AnyAsync(x => x.PlantId == id)
                 || await db.Ratings.AnyAsync(x => x.PlantId == id)
                 || await db.PortalUsers.AnyAsync(x => x.PlantId == id);
@@ -316,19 +333,45 @@ public static class FactoryServiceEndpoints
         return Results.Ok(new { total, uniqueDevices, sales = Metric(ServiceType.Sales), scale = Metric(ServiceType.Scale), loading = Metric(ServiceType.Loading), trend, plants, blockedAttempts = blocked });
     }
 
-    private static async Task<IResult> ResponsesAsync(FactoryDbContext db, ClaimsPrincipal user, DateTimeOffset? from, DateTimeOffset? to, Guid? plantId, Guid? operatorId, ServiceType? serviceType, int? score, string? search, int page = 1, int pageSize = 50)
+    private static async Task<IResult> ResponsesAsync(FactoryDbContext db, ClaimsPrincipal user, DateTimeOffset? from, DateTimeOffset? to, Guid? plantId, Guid? operatorId, ServiceType? serviceType, int? score, int page = 1, int pageSize = 50)
     {
-        IQueryable<Rating> query = BuildReportQuery(db, user, from, to, plantId, operatorId, serviceType, score, search);
+        IQueryable<SurveyResponse> query = BuildReportQuery(db, user, from, to, plantId, operatorId, serviceType, score);
         int total = await query.CountAsync();
-        var items = await query.OrderByDescending(x => x.SurveyResponse!.SubmittedAt).Skip((Math.Max(1, page) - 1) * Math.Clamp(pageSize, 1, 200)).Take(Math.Clamp(pageSize, 1, 200))
-            .Select(x => new { x.Id, x.SurveyResponse!.SubmittedAt, Plant = x.SurveyResponse.Plant!.Name, Operator = x.SurveyResponse.Operator!.DisplayName, x.ServiceType, x.Score, x.Comment }).ToListAsync();
+        var responses = await query.Include(x => x.Plant).Include(x => x.Operator).Include(x => x.Ratings)
+            .OrderByDescending(x => x.SubmittedAt)
+            .Skip((Math.Max(1, page) - 1) * Math.Clamp(pageSize, 1, 200))
+            .Take(Math.Clamp(pageSize, 1, 200))
+            .ToListAsync();
+        var items = responses.Select(x => new
+        {
+            x.Id,
+            x.SubmittedAt,
+            Plant = x.Plant!.Name,
+            Operator = x.Operator!.DisplayName,
+            LoadingScore = RatingScore(x, ServiceType.Loading),
+            LoadingComment = RatingComment(x, ServiceType.Loading),
+            SalesScore = RatingScore(x, ServiceType.Sales),
+            SalesComment = RatingComment(x, ServiceType.Sales),
+            ScaleScore = RatingScore(x, ServiceType.Scale),
+            ScaleComment = RatingComment(x, ServiceType.Scale),
+            Comment = ResponseComment(x)
+        });
         return Results.Ok(new { total, page = Math.Max(1, page), pageSize = Math.Clamp(pageSize, 1, 200), items });
     }
 
-    private static async Task<IResult> ExportAsync(string format, FactoryDbContext db, ClaimsPrincipal user, HttpContext context, DateTimeOffset? from, DateTimeOffset? to, Guid? plantId, Guid? operatorId, ServiceType? serviceType, int? score, string? search)
+    private static async Task<IResult> ExportAsync(string format, FactoryDbContext db, ClaimsPrincipal user, HttpContext context, DateTimeOffset? from, DateTimeOffset? to, Guid? plantId, Guid? operatorId, ServiceType? serviceType, int? score)
     {
-        var rows = await BuildReportQuery(db, user, from, to, plantId, operatorId, serviceType, score, search).OrderByDescending(x => x.SurveyResponse!.SubmittedAt)
-            .Select(x => new ReportRow(x.SurveyResponse!.SubmittedAt, x.SurveyResponse.Plant!.Name, x.SurveyResponse.Operator!.DisplayName, x.ServiceType, x.Score, x.Comment)).ToListAsync();
+        var responses = await BuildReportQuery(db, user, from, to, plantId, operatorId, serviceType, score)
+            .Include(x => x.Plant).Include(x => x.Operator).Include(x => x.Ratings)
+            .OrderByDescending(x => x.SubmittedAt).ToListAsync();
+        var rows = responses.Select(x => new ReportRow(
+            x.SubmittedAt,
+            x.Plant!.Name,
+            x.Operator!.DisplayName,
+            RatingScore(x, ServiceType.Loading),
+            RatingScore(x, ServiceType.Sales),
+            RatingScore(x, ServiceType.Scale),
+            ResponseComment(x))).ToList();
         byte[] bytes; string contentType; string extension;
         switch (format.ToLowerInvariant())
         {
@@ -336,22 +379,37 @@ public static class FactoryServiceEndpoints
             case "pdf": bytes = ReportExportService.Pdf(rows); contentType = "application/pdf"; extension = "pdf"; break;
             default: bytes = ReportExportService.Csv(rows); contentType = "text/csv; charset=utf-8"; extension = "csv"; break;
         }
-        await AuditAsync(db, user.UserId(), "Export", "Report", extension, "", JsonSerializer.Serialize(new { from, to, plantId, operatorId, serviceType, score, search, rows = rows.Count }), context);
+        await AuditAsync(db, user.UserId(), "Export", "Report", extension, "", JsonSerializer.Serialize(new { from, to, plantId, operatorId, serviceType, score, rows = rows.Count }), context);
         return Results.File(bytes, contentType, $"factory-service-report-{DateTime.Now:yyyyMMdd}.{extension}");
     }
 
-    private static IQueryable<Rating> BuildReportQuery(FactoryDbContext db, ClaimsPrincipal user, DateTimeOffset? from, DateTimeOffset? to, Guid? plantId, Guid? operatorId, ServiceType? serviceType, int? score, string? search)
+    private static IQueryable<SurveyResponse> BuildReportQuery(FactoryDbContext db, ClaimsPrincipal user, DateTimeOffset? from, DateTimeOffset? to, Guid? plantId, Guid? operatorId, ServiceType? serviceType, int? score)
     {
-        DateTimeOffset start = from ?? DateTimeOffset.UtcNow.AddDays(-30), end = to ?? DateTimeOffset.UtcNow.AddDays(1);
-        IQueryable<Rating> query = db.Ratings.AsNoTracking().Where(x => !x.SurveyResponse!.IsTest && x.SurveyResponse.SubmittedAt >= start && x.SurveyResponse.SubmittedAt < end);
+        DateTimeOffset start = from ?? DateTimeOffset.UtcNow.AddDays(-30), end = to?.AddDays(1) ?? DateTimeOffset.UtcNow.AddDays(1);
+        IQueryable<SurveyResponse> query = db.SurveyResponses.AsNoTracking().Where(x => !x.IsTest && x.SubmittedAt >= start && x.SubmittedAt < end);
         if (user.PlantScope() is Guid scope) plantId = scope;
         if (plantId is Guid p) query = query.Where(x => x.PlantId == p);
-        if (operatorId is Guid op) query = query.Where(x => x.SurveyResponse!.OperatorId == op && x.ServiceType == ServiceType.Sales);
-        if (serviceType is ServiceType service) query = query.Where(x => x.ServiceType == service);
-        if (score is >= 1 and <= 5) query = query.Where(x => x.Score == score);
-        if (!string.IsNullOrWhiteSpace(search)) query = query.Where(x => x.Comment.Contains(search));
+        if (operatorId is Guid op) query = query.Where(x => x.OperatorId == op);
+        if (serviceType is ServiceType service && score is >= 1 and <= 5)
+            query = query.Where(x => x.Ratings.Any(rating => rating.ServiceType == service && rating.Score == score));
+        else if (serviceType is ServiceType selectedService)
+            query = query.Where(x => x.Ratings.Any(rating => rating.ServiceType == selectedService));
+        else if (score is >= 1 and <= 5)
+            query = query.Where(x => x.Ratings.Any(rating => rating.Score == score));
         return query;
     }
+
+    private static int RatingScore(SurveyResponse response, ServiceType type) =>
+        response.Ratings.FirstOrDefault(x => x.ServiceType == type)?.Score ?? 0;
+
+    private static string RatingComment(SurveyResponse response, ServiceType type) =>
+        response.Ratings.FirstOrDefault(x => x.ServiceType == type)?.Comment?.Trim() ?? "";
+
+    private static string ResponseComment(SurveyResponse response) => string.Join(" • ", response.Ratings
+        .Where(x => !string.IsNullOrWhiteSpace(x.Comment))
+        .OrderBy(x => x.ServiceType)
+        .Select(x => x.Comment.Trim())
+        .Distinct(StringComparer.OrdinalIgnoreCase));
 
     private static string GetOrSetDeviceToken(HttpContext context, bool secure)
     {

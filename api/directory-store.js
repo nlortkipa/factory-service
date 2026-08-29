@@ -57,6 +57,15 @@ async function initialize(sql) {
     )
   `
   await sql`
+    CREATE TABLE IF NOT EXISTS factory_service_mfa_challenges (
+      nonce text PRIMARY KEY,
+      code_mac text NOT NULL,
+      expires_at timestamptz NOT NULL,
+      attempts integer NOT NULL DEFAULT 0,
+      used boolean NOT NULL DEFAULT false
+    )
+  `
+  await sql`
     INSERT INTO factory_service_plants (id, name, address, time_zone)
     VALUES (${defaultPlant.id}, ${defaultPlant.name}, ${defaultPlant.address}, ${defaultPlant.timeZone})
     ON CONFLICT (id) DO NOTHING
@@ -72,6 +81,32 @@ class DirectoryStore {
   constructor(connectionString) {
     this.sql = neon(connectionString)
     this.ready = initialize(this.sql)
+  }
+
+  async createMfaChallenge(entity) {
+    await this.ready
+    await this.sql`
+      DELETE FROM factory_service_mfa_challenges WHERE expires_at <= now()
+    `
+    await this.sql`
+      INSERT INTO factory_service_mfa_challenges (nonce, code_mac, expires_at)
+      VALUES (${entity.nonce}, ${entity.codeMac}, ${entity.expiresAt})
+    `
+  }
+
+  async consumeMfaChallenge(nonce, codeMac) {
+    await this.ready
+    const rows = await this.sql`
+      UPDATE factory_service_mfa_challenges
+      SET attempts = attempts + 1,
+          used = CASE WHEN code_mac = ${codeMac} THEN true ELSE used END
+      WHERE nonce = ${nonce}
+        AND expires_at > now()
+        AND attempts < 5
+        AND used = false
+      RETURNING code_mac = ${codeMac} AS valid, 5 - attempts AS "attemptsRemaining"
+    `
+    return rows[0] || null
   }
 
   async listPlants() {
@@ -268,6 +303,16 @@ class DirectoryStore {
       JOIN factory_service_operators o ON o.id = sr.operator_id
       ORDER BY sr.submitted_at DESC, r.service_type
     `
+  }
+
+  async deleteResponse(id) {
+    await this.ready
+    const rows = await this.sql`
+      DELETE FROM factory_service_survey_responses
+      WHERE id = ${id}
+      RETURNING id::text AS id
+    `
+    return rows.length > 0
   }
 }
 

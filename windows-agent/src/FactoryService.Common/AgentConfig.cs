@@ -27,17 +27,18 @@ public static class AgentConfigStore
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         ApplicationDirectoryName);
 
-    public static string MachineDataDirectory => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-        ApplicationDirectoryName);
+    public static string MachineDataDirectory => Environment.GetEnvironmentVariable("FACTORY_SERVICE_MACHINE_DATA")
+        ?? Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            ApplicationDirectoryName);
 
     public static string ConfigPath => Environment.GetEnvironmentVariable("FACTORY_SERVICE_CONFIG")
         ?? Path.Combine(ConfigDirectory, "config.json");
 
     public static AgentConfig LoadOrDefault()
     {
-        if (!File.Exists(ConfigPath)) return new AgentConfig();
-        return Deserialize(ConfigPath);
+        AgentConfig config = File.Exists(ConfigPath) ? Deserialize(ConfigPath) : new AgentConfig();
+        return ApplyEnvironmentOverrides(config);
     }
 
     public static AgentConfig EnsureExists()
@@ -49,9 +50,20 @@ public static class AgentConfigStore
             string? directory = Path.GetDirectoryName(Path.GetFullPath(ConfigPath));
             if (directory is not null) Directory.CreateDirectory(directory);
             File.WriteAllText(ConfigPath, JsonSerializer.Serialize(config, JsonOptions));
-            return config;
+            return ApplyEnvironmentOverrides(config);
         }
         return LoadOrDefault();
+    }
+
+    private static AgentConfig ApplyEnvironmentOverrides(AgentConfig config)
+    {
+        string? apiBaseUrl = Environment.GetEnvironmentVariable("FACTORY_SERVICE_API_BASE_URL");
+        string? operatorId = Environment.GetEnvironmentVariable("FACTORY_SERVICE_OPERATOR_ID");
+        return config with
+        {
+            ApiBaseUrl = string.IsNullOrWhiteSpace(apiBaseUrl) ? config.ApiBaseUrl : apiBaseUrl.Trim(),
+            OperatorId = string.IsNullOrWhiteSpace(operatorId) ? config.OperatorId : operatorId.Trim()
+        };
     }
 
     private static AgentConfig Deserialize(string path)
