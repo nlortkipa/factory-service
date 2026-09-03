@@ -1,19 +1,5 @@
 import { neon } from '@neondatabase/serverless'
 
-const defaultPlant = {
-  id: '78f731db-9089-4b2e-87a3-3fc1b24f4685',
-  name: 'კასპის ცემენტის ქარხანა',
-  address: 'კასპი, საქართველო',
-  timeZone: 'Asia/Tbilisi'
-}
-
-const defaultOperator = {
-  id: 'a2d623d3-87ac-4208-8cfa-39892988944c',
-  operatorId: '07IdLcVyn4q-s77Or8GldZwg_BsoQzSM',
-  displayName: 'ტესტ ოპერატორი',
-  plantId: defaultPlant.id
-}
-
 async function initialize(sql) {
   await sql`
     CREATE TABLE IF NOT EXISTS factory_service_plants (
@@ -64,16 +50,6 @@ async function initialize(sql) {
       attempts integer NOT NULL DEFAULT 0,
       used boolean NOT NULL DEFAULT false
     )
-  `
-  await sql`
-    INSERT INTO factory_service_plants (id, name, address, time_zone)
-    VALUES (${defaultPlant.id}, ${defaultPlant.name}, ${defaultPlant.address}, ${defaultPlant.timeZone})
-    ON CONFLICT (id) DO NOTHING
-  `
-  await sql`
-    INSERT INTO factory_service_operators (id, operator_id, display_name, plant_id)
-    VALUES (${defaultOperator.id}, ${defaultOperator.operatorId}, ${defaultOperator.displayName}, ${defaultOperator.plantId})
-    ON CONFLICT (id) DO NOTHING
   `
 }
 
