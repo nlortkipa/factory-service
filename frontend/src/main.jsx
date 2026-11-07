@@ -10,7 +10,13 @@ const serviceCopy = {
   Loading: { title: 'დატვირთვის მომსახურება', subtitle: 'ქარხნის მიხედვით' },
 }
 const scoreLabels = ['ძალიან ცუდი', 'ცუდი', 'საშუალო', 'კარგი', 'შესანიშნავი']
-const icons = { dashboard: '⌁', responses: '≡', plants: '◇', operators: '◎', settings: '⚙' }
+const pageCopy = {
+  dashboard: 'შედეგები და ტენდენციები ერთ ხედში',
+  responses: 'თითოეული შეფასების დეტალური ისტორია',
+  plants: 'ქარხნების მისამართები და მონაცემები',
+  operators: 'ოპერატორები და პერსონალური კლიენტები',
+  settings: 'შეფასების სისტემის საერთო წესები',
+}
 const adminBypass = import.meta.env.VITE_ADMIN_BYPASS === 'true'
 
 function createIdempotencyKey() {
@@ -36,12 +42,31 @@ function App() {
 
 function Landing() {
   return <main className="landing">
-    <div className="landing-mark">KC</div>
-    <p className="eyebrow">KARTULI CEMENT</p>
-    <h1>მომსახურების შეფასების სისტემა</h1>
-    <p>შეფასების ფორმა იხსნება ეკრანზე ნაჩვენები QR კოდის სკანირებით.</p>
-    <a className="primary-button inline" href="/admin">ადმინისტრაციული პორტალი</a>
+    <header className="landing-nav"><Brand/><a href="/admin">ადმინისტრაციული პორტალი <span aria-hidden="true">→</span></a></header>
+    <section className="landing-hero">
+      <div className="landing-copy">
+        <p className="eyebrow">მომსახურების შეფასება</p>
+        <h1>მომსახურება, რომელსაც <em>უკუკავშირი</em> აუმჯობესებს.</h1>
+        <p>დაასკანერეთ ოპერატორის ეკრანზე ნაჩვენები QR კოდი და შეაფასეთ გამოცდილება რამდენიმე წამში.</p>
+        <div className="landing-actions"><span className="landing-step"><b>01</b> დაასკანერეთ კოდი</span><span className="landing-step"><b>02</b> შეაფასეთ მომსახურება</span></div>
+      </div>
+      <div className="landing-signal" aria-hidden="true"><span>QR</span><i/><i/><i/><p>SCAN · RATE · IMPROVE</p></div>
+    </section>
+    <footer className="landing-footer"><span>ქართული ცემენტი</span><span>უსაფრთხო და ანონიმური უკუკავშირი</span></footer>
   </main>
+}
+
+function Brand() { return <div className="brand"><span>KC</span><strong>KARTULI<br/>CEMENT</strong></div> }
+
+function NavIcon({ name }) {
+  const paths = {
+    dashboard: <><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="4" rx="2"/><rect x="14" y="11" width="7" height="10" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/></>,
+    responses: <><path d="M5 6h14M5 12h9M5 18h11"/><circle cx="19" cy="12" r="2"/></>,
+    plants: <><path d="M4 21V9l8-5 8 5v12M9 21v-6h6v6M8 10h.01M12 10h.01M16 10h.01"/></>,
+    operators: <><circle cx="12" cy="8" r="4"/><path d="M4.5 21a7.5 7.5 0 0 1 15 0"/></>,
+    settings: <><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4v-.09A1.7 1.7 0 0 0 8.94 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15 1.7 1.7 0 0 0 3.05 14H3v-4h.09A1.7 1.7 0 0 0 4.6 8.94a1.7 1.7 0 0 0-.34-1.88L4.2 7l2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3.05V3h4v.09A1.7 1.7 0 0 0 15.06 4.6a1.7 1.7 0 0 0 1.88-.34L17 4.2 19.83 7l-.06.06A1.7 1.7 0 0 0 19.4 9 1.7 1.7 0 0 0 20.95 10H21v4h-.09A1.7 1.7 0 0 0 19.4 15Z"/></>,
+  }
+  return <svg viewBox="0 0 24 24" aria-hidden="true">{paths[name]}</svg>
 }
 
 function SurveyPage({ token }) {
@@ -79,8 +104,9 @@ function SurveyPage({ token }) {
   return <main className="survey-shell">
     <section className="survey-card">
       <header className="survey-header">
+        <span className="survey-brand">KC · KARTULI CEMENT</span>
         <strong>მომსახურების შეფასება</strong>
-        <span>ნაბიჯი {step + 1}/3</span>
+        <div className="survey-progress" aria-label={`ნაბიჯი ${step + 1} 3-დან`}><i style={{width: `${((step + 1) / 3) * 100}%`}}/></div>
       </header>
       <div className="survey-context"><b>{session.plant}</b><span>{session.operatorName}</span></div>
       <div className="survey-body" key={type}>
@@ -95,7 +121,7 @@ function SurveyPage({ token }) {
         {state.error && <p className="form-error" role="alert">{state.error}</p>}
         <div className="survey-actions">{step > 0 && <button className="text-button" onClick={() => setStep(step - 1)}>უკან</button>}<button className="primary-button" onClick={advance} disabled={state.submitting}>{state.submitting ? 'იგზავნება…' : step === 2 ? 'შეფასების გაგზავნა' : 'გაგრძელება'}</button></div>
       </div>
-      <footer className="survey-footer"><span>დაცული კავშირი • HTTPS</span><button className="privacy-link" title={session.privacyNotice}>კონფიდენციალურობა</button></footer>
+      <footer className="survey-footer"><span>ნაბიჯი {step + 1} / 3</span><button className="privacy-link" title={session.privacyNotice}>დაცული კავშირი · კონფიდენციალურობა</button></footer>
     </section>
   </main>
 }
@@ -136,7 +162,7 @@ function Portal({ onLogout }) {
   const [user, setUser] = useState(null)
   const tabs = [['dashboard','მიმოხილვა'],['responses','შეფასებები'],['plants','ქარხნები'],['operators','ოპერატორები'], ...(user?.role === 'SystemAdministrator' ? [['settings','პარამეტრები']] : [])]
   useEffect(() => { api('/api/auth/me').then(setUser).catch(() => {}) }, [])
-  return <div className="portal"><aside className="sidebar"><div className="sidebar-brand"><span>KC</span><strong>KARTULI<br/>CEMENT</strong></div><nav>{tabs.map(([key,label]) => <button key={key} className={tab === key ? 'active' : ''} onClick={() => setTab(key)}><i>{icons[key]}</i><span>{label}</span></button>)}</nav><button className="logout" onClick={onLogout}>გასვლა</button></aside><div className="portal-main"><header className="topbar"><div><p className="eyebrow dark">მომსახურების შეფასების სისტემა</p><h1>{tabs.find(x => x[0] === tab)?.[1]}</h1></div><div className="user-chip"><span>{user?.displayName?.[0] || 'A'}</span><div><b>{user?.displayName || 'ადმინისტრატორი'}</b><small>{roleName(user?.role)}</small></div></div></header><main className="content">{tab === 'dashboard' && <Dashboard />}{tab === 'responses' && <Responses canDelete={user?.role === 'SystemAdministrator'} />}{tab === 'plants' && <Directory type="plants" />}{tab === 'operators' && <Directory type="operators" />}{tab === 'settings' && user?.role === 'SystemAdministrator' && <RatingSettings />}</main></div></div>
+  return <div className="portal"><aside className="sidebar"><div className="sidebar-brand"><Brand/></div><p className="sidebar-label">სამუშაო სივრცე</p><nav>{tabs.map(([key,label]) => <button key={key} className={tab === key ? 'active' : ''} onClick={() => setTab(key)}><i><NavIcon name={key}/></i><span>{label}</span></button>)}</nav><div className="sidebar-foot"><span><i/> სისტემა აქტიურია</span><button className="logout" onClick={onLogout}><NavIcon name="operators"/> გასვლა</button></div></aside><div className="portal-main"><header className="topbar"><div><p className="eyebrow dark">მომსახურების მართვა</p><h1>{tabs.find(x => x[0] === tab)?.[1]}</h1><p className="page-description">{pageCopy[tab]}</p></div><div className="user-chip"><span>{user?.displayName?.[0] || 'A'}</span><div><b>{user?.displayName || 'ადმინისტრატორი'}</b><small>{roleName(user?.role)}</small></div></div></header><main className="content">{tab === 'dashboard' && <Dashboard />}{tab === 'responses' && <Responses canDelete={user?.role === 'SystemAdministrator'} />}{tab === 'plants' && <Directory type="plants" />}{tab === 'operators' && <Directory type="operators" />}{tab === 'settings' && user?.role === 'SystemAdministrator' && <RatingSettings />}</main></div></div>
 }
 
 function Dashboard() {
@@ -202,7 +228,7 @@ function RatingSettings() {
   </section>
 }
 
-function Metric({ label, value }) { return <article className="metric"><p>{label}</p><div><strong>{value}</strong></div></article> }
+function Metric({ label, value }) { return <article className="metric"><div className="metric-head"><p>{label}</p><span aria-hidden="true">↗</span></div><div><strong>{value}</strong><small>{label === 'სულ შეფასება' ? 'პასუხი' : 'ქულა / 5'}</small></div></article> }
 function PanelTitle({ title, note }) { return <header className="panel-title"><div><h2>{title}</h2><p>{note}</p></div></header> }
 function TrendChart({ data }) {
   const chart = { left: 72, right: 816, top: 18, bottom: 250 }
@@ -365,7 +391,7 @@ function Directory({ type }) {
         <div><h2>{titles[type]}</h2><p>{filteredItems.length === items.length ? `${items.length} ჩანაწერი` : `${filteredItems.length} / ${items.length} ჩანაწერი`}</p></div>
         <button className="small-button" disabled={pending || (type === 'operators' && !references.plants.length)} onClick={() => { setError(''); setEditing({ timeZone:'Asia/Tbilisi', plantId:references.plants[0]?.id || '' }) }}>+ შექმნა</button>
       </div>
-      {type === 'operators' && <div className="client-distribution-note"><span aria-hidden="true">↓</span><div><strong>ერთი პერსონალიზებული EXE თითო ოპერატორზე</strong><p>გადმოწერილი launcher ავტომატურად მიუთითებს სერვერსა და Operator ID-ს, შემდეგ აყენებს ან შლის Windows კლიენტს.</p></div></div>}
+      {type === 'operators' && <div className="client-distribution-note"><span aria-hidden="true">↓</span><div><strong>ერთი პერსონალიზებული EXE თითო ოპერატორზე</strong><p>კლიენტი უკვე შეიცავს საჭირო პარამეტრებს — მომხმარებელს მხოლოდ ინსტალაცია სჭირდება.</p></div></div>}
       {type === 'operators' && !references.plants.length && <p className="directory-help">ოპერატორის დამატებამდე შექმენით ქარხანა ქარხნების რეესტრში.</p>}
       {error && !editing && <p className="directory-error" role="alert">{error} <button className="row-action" onClick={load}>ხელახლა ცდა</button></p>}
       <DataTable columns={config.cols} rows={config.rows}/>

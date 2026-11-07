@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO.Compression;
+using System.Net.Http.Json;
 using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
@@ -8,6 +9,8 @@ using Microsoft.Win32;
 namespace FactoryService.Setup;
 
 internal sealed record Provisioning(string ApiBaseUrl, string PayloadUrl, string OperatorId, string OperatorName, string PlantName);
+internal sealed record StoredAssignment(string ApiBaseUrl, string OperatorId, string? OperatorName, string? PlantName);
+internal sealed record AssignmentLookup(string OperatorName, string PlantName);
 
 internal static class Program
 {
@@ -72,44 +75,81 @@ internal sealed class SetupForm : Form
 {
     private readonly Provisioning? _provisioning;
     private readonly Label _status;
+    private readonly Label _currentOperator;
+    private readonly Label _currentPlant;
     private readonly Button _install;
     private readonly Button _uninstall;
+    private StoredAssignment? _storedAssignment;
 
     public SetupForm(Provisioning? provisioning)
     {
         _provisioning = provisioning;
-        Text = "Factory Service — Client setup";
+        bool installed = Installed();
+        _storedAssignment = ReadCurrentUserConfig();
+        bool currentUserConfigured = installed && !string.IsNullOrWhiteSpace(_storedAssignment?.OperatorId);
+        bool sameAssignment = currentUserConfigured && provisioning is not null &&
+            string.Equals(_storedAssignment!.OperatorId, provisioning.OperatorId, StringComparison.Ordinal);
+        Text = "ქართული ცემენტი — მომსახურების კლიენტი";
         ClientSize = new Size(720, 520);
         MinimumSize = new Size(680, 500);
         StartPosition = FormStartPosition.CenterScreen;
-        BackColor = Color.FromArgb(239, 244, 246);
+        AutoScaleMode = AutoScaleMode.Dpi;
+        BackColor = Color.FromArgb(239, 243, 244);
         Font = new Font("Segoe UI", 10);
 
-        var header = new Panel { Dock = DockStyle.Top, Height = 138, BackColor = Color.FromArgb(25, 53, 81), Padding = new Padding(34, 24, 34, 18) };
-        var mark = new Label { Text = "KC", ForeColor = Color.White, BackColor = Color.FromArgb(0, 156, 69), Font = new Font("Segoe UI", 14, FontStyle.Bold), TextAlign = ContentAlignment.MiddleCenter, Size = new Size(54, 54), Location = new Point(34, 27) };
-        var title = new Label { Text = "Factory Service client", ForeColor = Color.White, Font = new Font("Segoe UI Semibold", 22), AutoSize = true, Location = new Point(108, 24) };
-        var subtitle = new Label { Text = "One launcher. The right operator. No config files to edit.", ForeColor = Color.FromArgb(193, 211, 222), AutoSize = true, Location = new Point(111, 68) };
-        header.Controls.AddRange([mark, title, subtitle]);
+        var user = new Label { Text = $"Windows მომხმარებელი: {Environment.UserName}", ForeColor = Color.FromArgb(72, 91, 102), Font = new Font("Segoe UI Semibold", 9), AutoEllipsis = true, Location = new Point(32, 25), Size = new Size(650, 28), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
+        var card = new Panel { BackColor = Color.White, BorderStyle = BorderStyle.FixedSingle, Location = new Point(30, 61), Size = new Size(660, 345), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
+        var currentTitle = new Label { Text = "მიმდინარე კონფიგურაცია", ForeColor = Color.FromArgb(86, 103, 113), Font = new Font("Segoe UI", 8, FontStyle.Bold), AutoSize = true, Location = new Point(28, 23) };
+        string currentOperatorName = CurrentOperatorText(_storedAssignment, currentUserConfigured);
+        string currentPlantName = CurrentPlantText(_storedAssignment, currentUserConfigured);
+        _currentOperator = new Label { Text = $"ოპერატორი: {currentOperatorName}", ForeColor = Color.FromArgb(25, 53, 70), Font = new Font("Segoe UI Semibold", 11), AutoEllipsis = true, Location = new Point(28, 52), Size = new Size(600, 30), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
+        _currentPlant = new Label { Text = $"ქარხანა: {currentPlantName}", ForeColor = Color.FromArgb(25, 53, 70), Font = new Font("Segoe UI Semibold", 11), AutoEllipsis = true, Location = new Point(28, 88), Size = new Size(600, 30), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
+        var statusDot = new Label { Text = currentUserConfigured ? "" : "●", ForeColor = Color.FromArgb(139, 154, 162), Font = new Font("Segoe UI", 9), AutoSize = true, Location = new Point(28, 126) };
+        _status = new Label { Text = currentUserConfigured ? "" : installed ? "კლიენტი დაყენებულია, მაგრამ ეს მომხმარებელი არ არის გამართული" : "კლიენტი ჯერ არ არის დაყენებული", ForeColor = Color.FromArgb(72, 91, 102), Font = new Font("Segoe UI Semibold", 9), Location = new Point(50, 125), Size = new Size(575, 28), AutoEllipsis = true, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
+        var divider = new Panel { BackColor = Color.FromArgb(229, 235, 237), Location = new Point(28, 170), Size = new Size(600, 1), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
+        var incomingTitle = new Label { Text = sameAssignment ? "ამ EXE-ში იგივე კონფიგურაციაა" : currentUserConfigured ? "დაყენების შემდეგ შეიცვლება" : "დასაყენებელი კონფიგურაცია", ForeColor = Color.FromArgb(86, 103, 113), Font = new Font("Segoe UI", 8, FontStyle.Bold), AutoSize = true, Location = new Point(28, 194) };
+        var incomingOperator = new Label { Text = $"ოპერატორი: {provisioning?.OperatorName ?? "—"}", ForeColor = Color.FromArgb(25, 53, 70), Font = new Font("Segoe UI Semibold", 11), AutoEllipsis = true, Location = new Point(28, 224), Size = new Size(600, 30), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
+        var incomingPlant = new Label { Text = $"ქარხანა: {provisioning?.PlantName ?? "—"}", ForeColor = Color.FromArgb(25, 53, 70), Font = new Font("Segoe UI Semibold", 11), AutoEllipsis = true, Location = new Point(28, 260), Size = new Size(600, 30), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
+        card.Controls.AddRange([currentTitle, _currentOperator, _currentPlant, statusDot, _status, divider, incomingTitle, incomingOperator, incomingPlant]);
 
-        var card = new Panel { BackColor = Color.White, Location = new Point(34, 166), Size = new Size(652, 250), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right, Padding = new Padding(28) };
-        var assignmentLabel = new Label { Text = "THIS CLIENT IS ASSIGNED TO", ForeColor = Color.FromArgb(0, 125, 56), Font = new Font("Segoe UI", 8, FontStyle.Bold), AutoSize = true, Location = new Point(28, 24) };
-        var operatorName = new Label { Text = provisioning?.OperatorName ?? "This launcher is not provisioned", ForeColor = Color.FromArgb(25, 53, 81), Font = new Font("Segoe UI Semibold", 20), AutoEllipsis = true, Location = new Point(28, 48), Size = new Size(590, 40) };
-        var plant = new Label { Text = provisioning?.PlantName ?? "Download it from an operator row in the administration portal.", ForeColor = Color.FromArgb(92, 111, 125), AutoEllipsis = true, Location = new Point(30, 88), Size = new Size(585, 26) };
-        var divider = new Panel { BackColor = Color.FromArgb(224, 232, 236), Location = new Point(28, 124), Size = new Size(596, 1), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
-        var serverCaption = new Label { Text = "Server", ForeColor = Color.FromArgb(111, 124, 136), Font = new Font("Segoe UI", 8, FontStyle.Bold), AutoSize = true, Location = new Point(28, 143) };
-        var server = new Label { Text = provisioning?.ApiBaseUrl ?? "—", ForeColor = Color.FromArgb(25, 53, 81), AutoEllipsis = true, Location = new Point(28, 164), Size = new Size(590, 24) };
-        _status = new Label { Text = Installed() ? "● Client is installed on this computer" : "○ Client is not installed yet", ForeColor = Installed() ? Color.FromArgb(0, 125, 56) : Color.FromArgb(92, 111, 125), Location = new Point(28, 204), AutoSize = true };
-        card.Controls.AddRange([assignmentLabel, operatorName, plant, divider, serverCaption, server, _status]);
-
-        _install = new Button { Text = Installed() ? "Repair / update" : "Install client", BackColor = Color.FromArgb(0, 156, 69), ForeColor = Color.White, FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI Semibold", 10), Size = new Size(180, 48), Location = new Point(34, 442), Enabled = provisioning is not null };
+        _install = new Button { Text = sameAssignment ? "განახლება / აღდგენა" : currentUserConfigured ? "ოპერატორის შეცვლა" : "კლიენტის დაყენება", BackColor = Color.FromArgb(11, 156, 85), ForeColor = Color.White, FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI Semibold", 10), Size = new Size(202, 50), Location = new Point(30, 432), Enabled = provisioning is not null, Anchor = AnchorStyles.Bottom | AnchorStyles.Left };
         _install.FlatAppearance.BorderSize = 0;
+        _install.FlatAppearance.MouseOverBackColor = Color.FromArgb(8, 124, 68);
         _install.Click += (_, _) => Begin("install");
-        _uninstall = new Button { Text = "Uninstall", BackColor = Color.White, ForeColor = Color.FromArgb(151, 43, 35), FlatStyle = FlatStyle.Flat, Size = new Size(130, 48), Location = new Point(226, 442), Enabled = Installed() };
-        _uninstall.FlatAppearance.BorderColor = Color.FromArgb(231, 202, 199);
+        _uninstall = new Button { Text = "წაშლა", BackColor = Color.FromArgb(239, 243, 244), ForeColor = Color.FromArgb(160, 53, 46), FlatStyle = FlatStyle.Flat, Size = new Size(116, 50), Location = new Point(244, 432), Enabled = installed, Anchor = AnchorStyles.Bottom | AnchorStyles.Left };
+        _uninstall.FlatAppearance.BorderColor = Color.FromArgb(218, 226, 229);
         _uninstall.Click += (_, _) => Begin("uninstall");
-        var note = new Label { Text = "Windows will ask for administrator approval.", ForeColor = Color.FromArgb(111, 124, 136), AutoSize = true, Location = new Point(388, 457), Anchor = AnchorStyles.Top | AnchorStyles.Right };
+        Controls.AddRange([user, card, _install, _uninstall]);
+        if (currentUserConfigured && string.IsNullOrWhiteSpace(_storedAssignment?.OperatorName))
+            Shown += ResolveStoredAssignment;
+    }
 
-        Controls.AddRange([header, card, _install, _uninstall, note]);
+    private static string CurrentOperatorText(StoredAssignment? assignment, bool configured) => !configured ? "—" :
+        !string.IsNullOrWhiteSpace(assignment?.OperatorName) ? assignment.OperatorName : "მონაცემები იტვირთება…";
+
+    private static string CurrentPlantText(StoredAssignment? assignment, bool configured) => !configured ? "—" :
+        !string.IsNullOrWhiteSpace(assignment?.PlantName) ? assignment.PlantName : "მონაცემები იტვირთება…";
+
+    private async void ResolveStoredAssignment(object? sender, EventArgs eventArgs)
+    {
+        Shown -= ResolveStoredAssignment;
+        try
+        {
+            using var client = new HttpClient { BaseAddress = new Uri(_storedAssignment!.ApiBaseUrl.TrimEnd('/') + "/"), Timeout = TimeSpan.FromSeconds(10) };
+            using HttpResponseMessage response = await client.PostAsJsonAsync("api/agent/qr", new { _storedAssignment.OperatorId, CurrentToken = (string?)null });
+            response.EnsureSuccessStatusCode();
+            AssignmentLookup? lookup = await response.Content.ReadFromJsonAsync<AssignmentLookup>();
+            if (lookup is null) return;
+            _storedAssignment = _storedAssignment with { OperatorName = lookup.OperatorName, PlantName = lookup.PlantName };
+            _currentOperator.Text = $"ოპერატორი: {lookup.OperatorName}";
+            _currentPlant.Text = $"ქარხანა: {lookup.PlantName}";
+            WriteStoredAssignment(_storedAssignment);
+        }
+        catch
+        {
+            _currentOperator.Text = $"ოპერატორი: {_storedAssignment!.OperatorId}";
+            _currentPlant.Text = "ქარხანა: მონაცემები მიუწვდომელია";
+        }
     }
 
     private void Begin(string action)
@@ -126,17 +166,32 @@ internal sealed class SetupForm : Form
         catch (Exception exception) when (exception is not OutOfMemoryException)
         {
             _status.Text = exception is System.ComponentModel.Win32Exception { NativeErrorCode: 1223 }
-                ? "Administrator approval was cancelled."
-                : $"Could not start setup: {exception.Message}";
+                ? "ადმინისტრატორის დასტური გაუქმდა"
+                : $"დაყენება ვერ დაიწყო: {exception.Message}";
             _status.ForeColor = Color.FromArgb(180, 48, 40);
         }
     }
 
     private static string UserConfigPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Factory Service Agent", "config.json");
+    private static StoredAssignment? ReadCurrentUserConfig()
+    {
+        try
+        {
+            if (!File.Exists(UserConfigPath)) return null;
+            return JsonSerializer.Deserialize<StoredAssignment>(File.ReadAllText(UserConfigPath), new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException) { return null; }
+    }
+
     private static void WriteCurrentUserConfig(Provisioning value)
     {
+        WriteStoredAssignment(new StoredAssignment(value.ApiBaseUrl.TrimEnd('/'), value.OperatorId, value.OperatorName, value.PlantName));
+    }
+
+    private static void WriteStoredAssignment(StoredAssignment value)
+    {
         Directory.CreateDirectory(Path.GetDirectoryName(UserConfigPath)!);
-        string json = JsonSerializer.Serialize(new { apiBaseUrl = value.ApiBaseUrl.TrimEnd('/'), operatorId = value.OperatorId }, new JsonSerializerOptions { WriteIndented = true });
+        string json = JsonSerializer.Serialize(value, new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
         string temporary = UserConfigPath + ".new";
         File.WriteAllText(temporary, json, new UTF8Encoding(false));
         File.Move(temporary, UserConfigPath, true);
@@ -155,13 +210,16 @@ internal sealed class ProgressForm : Form
     public ProgressForm(Provisioning? provisioning, string action)
     {
         _provisioning = provisioning; _action = action;
-        Text = "Factory Service — Client setup";
-        ClientSize = new Size(540, 220); StartPosition = FormStartPosition.CenterScreen; BackColor = Color.White;
-        Font = new Font("Segoe UI", 10); ControlBox = false;
-        Controls.Add(new Label { Text = action == "uninstall" ? "Removing Factory Service client" : "Installing Factory Service client", Font = new Font("Segoe UI Semibold", 17), ForeColor = Color.FromArgb(25, 53, 81), AutoSize = true, Location = new Point(34, 34) });
-        _message = new Label { Text = "Preparing…", ForeColor = Color.FromArgb(92, 111, 125), AutoEllipsis = true, Location = new Point(36, 84), Size = new Size(470, 28) };
-        _progress = new ProgressBar { Location = new Point(36, 124), Size = new Size(468, 12), Style = ProgressBarStyle.Marquee, MarqueeAnimationSpeed = 24 };
-        Controls.AddRange([_message, _progress]);
+        Text = "ქართული ცემენტი — მომსახურების კლიენტი";
+        ClientSize = new Size(570, 250); StartPosition = FormStartPosition.CenterScreen; BackColor = Color.White;
+        AutoScaleMode = AutoScaleMode.Dpi; Font = new Font("Segoe UI", 10); ControlBox = false;
+        var accent = new Panel { Dock = DockStyle.Left, Width = 7, BackColor = Color.FromArgb(11, 156, 85) };
+        var kicker = new Label { Text = "ქართული ცემენტი", Font = new Font("Segoe UI", 8, FontStyle.Bold), ForeColor = Color.FromArgb(8, 124, 68), AutoSize = true, Location = new Point(38, 32) };
+        var title = new Label { Text = action == "uninstall" ? "კლიენტის წაშლა" : "კლიენტის დაყენება", Font = new Font("Sylfaen", 19, FontStyle.Bold), ForeColor = Color.FromArgb(16, 42, 59), AutoSize = true, Location = new Point(34, 54) };
+        _message = new Label { Text = "მზადდება…", ForeColor = Color.FromArgb(92, 111, 125), AutoEllipsis = true, Location = new Point(37, 112), Size = new Size(495, 28) };
+        _progress = new ProgressBar { Location = new Point(38, 151), Size = new Size(494, 8), Style = ProgressBarStyle.Marquee, MarqueeAnimationSpeed = 24 };
+        var note = new Label { Text = "არ დახუროთ ფანჯარა პროცესის დასრულებამდე", ForeColor = Color.FromArgb(132, 146, 153), Font = new Font("Segoe UI", 8), AutoSize = true, Location = new Point(38, 184) };
+        Controls.AddRange([accent, kicker, title, _message, _progress, note]);
         Shown += async (_, _) => await RunAsync();
     }
 
@@ -172,17 +230,17 @@ internal sealed class ProgressForm : Form
             if (_action == "uninstall") await Task.Run(Uninstall);
             else
             {
-                if (_provisioning is null) throw new InvalidDataException("This launcher has no operator assignment.");
+                if (_provisioning is null) throw new InvalidDataException("ამ გამშვებს ოპერატორი არ აქვს მინიჭებული.");
                 await InstallAsync(_provisioning);
             }
             _progress.Style = ProgressBarStyle.Blocks; _progress.Value = 100;
-            _message.Text = _action == "uninstall" ? "Client removed successfully." : "Client installed. It will start automatically.";
+            _message.Text = _action == "uninstall" ? "კლიენტი წარმატებით წაიშალა" : "კლიენტი დაყენებულია და ავტომატურად გაეშვება";
             await Task.Delay(1200); Close();
         }
         catch (Exception exception)
         {
             _progress.Style = ProgressBarStyle.Blocks; _progress.Value = 0;
-            _message.Text = $"Setup failed: {exception.Message}";
+            _message.Text = $"დაყენება ვერ დასრულდა: {exception.Message}";
             ControlBox = true;
         }
     }
@@ -194,7 +252,7 @@ internal sealed class ProgressForm : Form
         try
         {
             string zip = Path.Combine(tempRoot, "client.zip");
-            Invoke(() => _message.Text = "Downloading the latest client…");
+            Invoke(() => _message.Text = "კლიენტის უახლესი ვერსია იტვირთება…");
             using (var client = new HttpClient { Timeout = TimeSpan.FromMinutes(10) })
             using (var response = await client.GetAsync(provisioning.PayloadUrl, HttpCompletionOption.ResponseHeadersRead))
             {
@@ -206,9 +264,9 @@ internal sealed class ProgressForm : Form
             ZipFile.ExtractToDirectory(zip, payload);
             string service = Path.Combine(payload, "FactoryService.Service.exe");
             string companion = Path.Combine(payload, "FactoryService.Companion.exe");
-            if (!File.Exists(service) || !File.Exists(companion)) throw new InvalidDataException("The downloaded client package is incomplete.");
+            if (!File.Exists(service) || !File.Exists(companion)) throw new InvalidDataException("ჩამოტვირთული კლიენტის პაკეტი არასრულია.");
 
-            Invoke(() => _message.Text = "Installing the Windows service…");
+            Invoke(() => _message.Text = "სისტემური სერვისი ყენდება…");
             Run("sc.exe", "stop FactoryServiceAgent", allowFailure: true);
             Run("taskkill.exe", "/IM FactoryService.Companion.exe /F", allowFailure: true);
             string install = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Factory Service Agent");
@@ -225,7 +283,7 @@ internal sealed class ProgressForm : Form
             if (Run("sc.exe", "query FactoryServiceAgent", true) != 0)
                 Run("sc.exe", $"create FactoryServiceAgent binPath= \"\\\"{installedService}\\\"\" DisplayName= \"Factory Service Agent\" start= auto");
             else Run("sc.exe", $"config FactoryServiceAgent binPath= \"\\\"{installedService}\\\"\" start= auto obj= LocalSystem");
-            Run("sc.exe", "description FactoryServiceAgent \"Starts the Factory Service companion for signed-in users.\"");
+            Run("sc.exe", "description FactoryServiceAgent \"ავტომატურად უშვებს მომსახურების შეფასების კლიენტს.\"");
             Run("sc.exe", "failure FactoryServiceAgent reset= 86400 actions= restart/5000/restart/15000/restart/30000");
             using (RegistryKey key = Registry.LocalMachine.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"))
                 key.SetValue("FactoryServiceCompanion", $"\"{installedCompanion}\" --background --installed");
@@ -237,7 +295,7 @@ internal sealed class ProgressForm : Form
 
     private void Uninstall()
     {
-        Invoke(() => _message.Text = "Stopping and removing the client…");
+        Invoke(() => _message.Text = "კლიენტი ჩერდება და იშლება…");
         using (RegistryKey? key = Registry.LocalMachine.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", true)) key?.DeleteValue("FactoryServiceCompanion", false);
         Run("sc.exe", "stop FactoryServiceAgent", true);
         Run("taskkill.exe", "/IM FactoryService.Companion.exe /F", true);
@@ -254,9 +312,9 @@ internal sealed class ProgressForm : Form
 
     private static int Run(string file, string arguments, bool allowFailure = false)
     {
-        using var process = Process.Start(new ProcessStartInfo(file, arguments) { UseShellExecute = false, CreateNoWindow = true }) ?? throw new InvalidOperationException($"Could not start {file}.");
+        using var process = Process.Start(new ProcessStartInfo(file, arguments) { UseShellExecute = false, CreateNoWindow = true }) ?? throw new InvalidOperationException($"{file} ვერ გაეშვა.");
         process.WaitForExit();
-        if (!allowFailure && process.ExitCode != 0) throw new InvalidOperationException($"{file} failed with exit code {process.ExitCode}.");
+        if (!allowFailure && process.ExitCode != 0) throw new InvalidOperationException($"{file} შეცდომით დასრულდა (კოდი: {process.ExitCode}).");
         return process.ExitCode;
     }
 }
