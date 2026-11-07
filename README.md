@@ -6,6 +6,16 @@ End-to-end implementation of the Georgian technical specification:
 - `frontend/` — responsive React/Vite public survey and administration portal matching the green/navy UI concepts in the specification.
 - `windows-agent/` — .NET 10 Windows Service plus tray companion. The companion requests short-lived QR sessions, detects the Turmo USB panel's serial port, and sends the QR design directly to its 320×480 display.
 
+System administrators can change the rating cooldown in **პარამეტრები → შეფასების სიხშირე**.
+Enter a whole number from 0 to 3650 days (default: 7); 0 disables the waiting period.
+The saved setting applies immediately to the last rating from the same browser/device,
+across all plants and operators, and is checked when opening and submitting a survey.
+Production stores it in the database; the Node adapter without a database uses memory.
+The overview supports combined date, plant, and operator filters for all three services.
+QR codes expire after five minutes. The Windows companion checks every five seconds,
+keeps unused codes unchanged, and replaces a code after a successful rating or expiry.
+Deploy the API/frontend and update installed Windows companions to apply both parts.
+
 ## Local development
 
 Start the API, React frontend, Windows service in console mode, and Turmo QR
@@ -54,7 +64,7 @@ launcher keeps the saved production client configuration untouched and overrides
 the companion process to use `http://localhost:5000`.
 
 The Vercel deployment is available at
-`https://factory-service-app.vercel.app/admin`. Vercel does not provide an
+`https://factory-service.vercel.app/admin`. Vercel does not provide an
 official .NET runtime, so the deployment uses `api/index.js`. Connect a Neon
 Postgres database and expose its connection string as `DATABASE_URL`; the Node
 adapter creates its plant/operator tables automatically. Without a database,
@@ -80,13 +90,10 @@ Run the Turmo QR companion after the backend is ready:
 dotnet run --project .\windows-agent\src\FactoryService.Companion
 ```
 
-On first launch, the companion creates a separate configuration for the current
-Windows user at `%LOCALAPPDATA%\Factory Service Agent\config.json`. It contains
-`apiBaseUrl` (initially `http://localhost:5000`) and a blank `operatorId`.
-[`windows-agent/config.example.json`](./windows-agent/config.example.json)
-documents the format. Create an operator in the administration portal and copy
-its generated Operator ID into that user's configuration before starting the
-companion.
+For development only, the companion can still create a default configuration at
+`%LOCALAPPDATA%\Factory Service Agent\config.json`. Production users do not edit
+that file: the administration portal generates a personalized launcher that
+writes the backend URL and Operator ID into the current Windows user's profile.
 
 ## Production database
 
@@ -107,24 +114,29 @@ cd .\frontend
 npm run build
 ```
 
-## Build and install the Windows client
+## Build and distribute the Windows client
 
-Build the dependency-free Windows x64 ZIP with:
+Build the self-contained Windows x64 launcher and downloadable payload with:
 
 ```powershell
 .\windows-agent\scripts\package-client.ps1
 ```
 
-On Windows, double-click `Create-Production-Client-Zip.bat` to run the same
-Release packaging flow and write the ZIP under `windows-agent\dist`.
+The command writes `FactoryService.Setup.exe` and
+`FactoryServiceClient-win-x64.zip` to both `windows-agent\dist` and
+`frontend\public\downloads`. Deploy both web assets with the portal.
 
-Send `windows-agent\dist\FactoryServiceClient-win-x64.zip`. The recipient only
-needs to extract it and double-click `Install.cmd`; the package contains the
-self-contained .NET runtime. Each user then fills in the API URL and Operator ID
-in `%LOCALAPPDATA%\Factory Service Agent\config.json`.
+In the portal, open **Operators** and click **Download EXE** on the intended
+operator. The browser attaches the current backend URL, payload URL, Operator ID,
+operator name, and plant name to a copy of the launcher. Send that one EXE to the
+recipient. When they run it, the launcher:
 
-The installer creates a delayed-auto Windows Service with restart recovery and
-registers the companion for every user logon. It disables (but does not delete)
-the vendor `TURMO_ScheduleTask`, because `TURMO.exe` and the factory companion
-cannot both own the panel's serial port. `Uninstall.cmd` reverses those startup
-changes.
+1. shows the assigned operator and plant for confirmation;
+2. writes `%LOCALAPPDATA%\Factory Service Agent\config.json` for the Windows user
+   who opened the launcher;
+3. requests administrator approval and downloads the latest payload;
+4. installs or repairs the Windows service and companion.
+
+The same launcher also offers **Uninstall**, which removes the current user's
+configuration and the machine-wide client. No CMD or PowerShell script is part
+of the recipient workflow.

@@ -3,16 +3,17 @@ namespace FactoryService.Companion;
 internal static class Program
 {
     [STAThread]
-    private static void Main()
+    private static void Main(string[] args)
     {
         ApplicationConfiguration.Initialize();
 
-        string mutexName = $"Local\\FactoryService.Companion.{Environment.UserName}";
+        using var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+        string mutexName = $"Local\\FactoryService.Companion.{identity.User!.Value}";
         using var mutex = new Mutex(initiallyOwned: true, mutexName, out bool isFirstInstance);
 
         if (!isFirstInstance)
         {
-            MessageBox.Show(
+            if (!args.Contains("--background")) MessageBox.Show(
                 "Factory Service Companion is already running for this user.",
                 "Factory Service",
                 MessageBoxButtons.OK,
@@ -20,6 +21,6 @@ internal static class Program
             return;
         }
 
-        Application.Run(new CompanionApplicationContext());
+        Application.Run(new CompanionApplicationContext(args.Contains("--installed")));
     }
 }

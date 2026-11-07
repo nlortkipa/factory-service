@@ -1,5 +1,6 @@
 import crypto from 'node:crypto'
 import { getDirectoryStore } from './directory-store.js'
+import { createQrToken, readQrToken } from './qr-token.js'
 
 const plantId = '78f731db-9089-4b2e-87a3-3fc1b24f4685'
 const operatorRecordId = 'a2d623d3-87ac-4208-8cfa-39892988944c'
@@ -13,9 +14,7 @@ const authSigningKey = process.env.AUTH_SIGNING_KEY || smsKey || signingKey
 const adminUsername = process.env.ADMIN_USERNAME || 'admin'
 const adminPhone = (process.env.ADMIN_PHONE || '').trim()
 const adminDisplayName = process.env.ADMIN_DISPLAY_NAME || 'System Administrator'
-const repeatWindowDays = 7
-const repeatWindowMs = repeatWindowDays * 86400000
-const qrLifetimeMs = 60 * 1000
+const qrLifetimeMs = 5 * 60 * 1000
 const surveyLifetimeMs = 20 * 60 * 1000
 const deviceCookieName = 'factory_service_device'
 
@@ -95,14 +94,6 @@ function verifyWithKey(token, key) {
   try { return JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) } catch { return null }
 }
 
-function sign(payload) {
-  return signWithKey(payload, signingKey)
-}
-
-function verify(token) {
-  return verifyWithKey(token, signingKey)
-}
-
 function fixedEquals(left, right) {
   const leftBuffer = Buffer.from(String(left))
   const rightBuffer = Buffer.from(String(right))
@@ -179,7 +170,7 @@ function deviceHash(token) {
   return crypto.createHash('sha256').update(token).digest('hex')
 }
 
-function nextAllowedAt(submittedAt) {
+function nextAllowedAt(submittedAt, repeatWindowMs) {
   return new Date(new Date(submittedAt).getTime() + repeatWindowMs).toISOString()
 }
 
@@ -194,7 +185,7 @@ function filteredRatings(items, query) {
     const time = new Date(item.submittedAt).getTime()
     return time >= from && time < to
       && (!query.plantId || item.plantId === query.plantId)
-      && (!query.operatorId || (item.operatorId === query.operatorId && item.serviceType === 'Sales'))
+      && (!query.operatorId || item.operatorId === query.operatorId)
       && (!query.serviceType || item.serviceType === query.serviceType)
       && (!query.score || item.score === Number(query.score))
   })
@@ -270,7 +261,7 @@ export default async function handler(request, response) {
   const method = request.method || 'GET'
   const input = body(request)
   const directoryStore = getDirectoryStore()
-  const needsDirectory = path === 'auth/login' || path === 'auth/verify' || path === 'agent/qr' || path.startsWith('survey/') || path === 'admin/dashboard' || path === 'admin/responses' || path.startsWith('admin/responses/') || path.startsWith('admin/exports/') || path === 'admin/plants' || path.startsWith('admin/plants/') || path === 'admin/operators' || path.startsWith('admin/operators/')
+  const needsDirectory = path === 'admin/settings' || path === 'auth/login' || path === 'auth/verify' || path === 'agent/qr' || path.startsWith('survey/') || path === 'admin/dashboard' || path === 'admin/responses' || path.startsWith('admin/responses/') || path.startsWith('admin/exports/') || path === 'admin/plants' || path.startsWith('admin/plants/') || path === 'admin/operators' || path.startsWith('admin/operators/')
 
   if (process.env.VERCEL && needsDirectory && !directoryStore) {
     console.error('[directory] DATABASE_URL is not configured')
@@ -326,42 +317,61 @@ export default async function handler(request, response) {
 
   if (path === 'agent/qr' && method === 'POST') {
     const requestedOperatorId = String(input.operatorId || '').trim()
+    if (!requestedOperatorId || requestedOperatorId.length > 64) return json(response, 400, { code: 'INVALID_OPERATOR_ID', message: 'მიუთითეთ სწორი ოპერატორის ID.' })
     const factoryOperator = directoryStore
       ? await directoryStore.findOperatorByOperatorId(requestedOperatorId)
       : operators.find(item => item.operatorId === requestedOperatorId)
     if (!factoryOperator) return json(response, 404, { code: 'OPERATOR_NOT_FOUND', message: 'ოპერატორი ვერ მოიძებნა.' })
     const now = Date.now()
-    const payload = { sessionId: crypto.randomUUID(), operatorId: factoryOperator.id, plantId: factoryOperator.plantId, operatorName: factoryOperator.displayName, plantName: factoryOperator.plantName, issuedAt: now, expiresAt: now + qrLifetimeMs, surveyExpiresAt: now + surveyLifetimeMs }
-    const token = sign(payload)
-    return json(response, 200, { token, surveyUrl: `${publicBaseUrl(request)}/s/${encodeURIComponent(token)}`, expiresAt: new Date(payload.expiresAt).toISOString(), operatorName: payload.operatorName, plantName: payload.plantName })
+    const currentToken = typeof input.currentToken === 'string' ? input.currentToken : ''
+    let payload = readQrToken(currentToken, signingKey)
+    const reusable = payload && payload.operatorId === factoryOperator.id && payload.plantId === factoryOperator.plantId
+      && payload.issuedAt <= now && payload.issuedAt + qrLifetimeMs > now
+      && !(directoryStore ? await directoryStore.isSessionCompleted(payload.sessionId) : completedSessions.has(payload.sessionId))
+    if (!reusable) payload = { sessionId: crypto.randomUUID(), operatorId: factoryOperator.id, plantId: factoryOperator.plantId, issuedAt: now }
+    const token = reusable ? currentToken : createQrToken(payload, signingKey)
+    return json(response, 200, { token, surveyUrl: `${publicBaseUrl(request)}/s/${encodeURIComponent(token)}`, expiresAt: new Date(payload.issuedAt + qrLifetimeMs).toISOString(), operatorName: factoryOperator.displayName, plantName: factoryOperator.plantName })
   }
 
   if (path.startsWith('survey/')) {
+    const currentSettings = { ...settings, ...(directoryStore ? await directoryStore.getSettings() : {}) }
+    const repeatWindowMs = Number(currentSettings.repeatWindowDays) * 86400000
+    const nextAllowed = submittedAt => nextAllowedAt(submittedAt, repeatWindowMs)
     const token = decodeURIComponent(parseGuidPath(path, 'survey/'))
-    const payload = verify(token)
+    // Accept already-issued JSON links while new links use compact signed bytes.
+    const payload = token.startsWith('q1_') ? readQrToken(token, signingKey) : verifyWithKey(token, signingKey)
     if (!payload) return json(response, 400, { code: 'QR_INVALID', message: 'QR კოდი არასწორია.' })
+    if (token.startsWith('q1_')) {
+      payload.expiresAt = payload.issuedAt + qrLifetimeMs
+      payload.surveyExpiresAt = payload.issuedAt + surveyLifetimeMs
+      const factoryOperator = directoryStore ? await directoryStore.findOperator(payload.operatorId) : operators.find(item => item.id === payload.operatorId)
+      const plant = directoryStore ? await directoryStore.findPlant(payload.plantId) : plants.find(item => item.id === payload.plantId)
+      if (!factoryOperator || !plant) return json(response, 400, { code: 'QR_INVALID', message: 'QR კოდი აღარ არის მოქმედი.' })
+      payload.operatorName = factoryOperator.displayName
+      payload.plantName = plant.name
+    }
     if (method === 'GET') {
       if (payload.expiresAt <= Date.now()) return json(response, 400, { code: 'QR_EXPIRED', message: 'QR კოდს ვადა გაუვიდა. გთხოვთ თავიდან დაასკანეროთ.' })
       const hash = deviceHash(getOrSetDeviceToken(request, response))
       const cutoff = new Date(Date.now() - repeatWindowMs).toISOString()
-      const recent = directoryStore
+      const recent = repeatWindowMs === 0 ? null : directoryStore
         ? await directoryStore.findRecentResponse(hash, cutoff)
-        : deviceResponses.filter(item => item.deviceTokenHash === hash && new Date(item.submittedAt) >= new Date(cutoff)).sort((a, b) => b.submittedAt.localeCompare(a.submittedAt))[0]
-      return json(response, 200, { sessionId: payload.sessionId, plant: payload.plantName, operatorName: payload.operatorName, surveyExpiresAt: new Date(payload.surveyExpiresAt).toISOString(), blocked: Boolean(recent), nextAllowedAt: recent ? nextAllowedAt(recent.submittedAt) : null, privacyNotice: settings.privacyNotice })
+        : deviceResponses.filter(item => item.deviceTokenHash === hash && new Date(item.submittedAt) > new Date(cutoff)).sort((a, b) => b.submittedAt.localeCompare(a.submittedAt))[0]
+      return json(response, 200, { sessionId: payload.sessionId, plant: payload.plantName, operatorName: payload.operatorName, surveyExpiresAt: new Date(payload.surveyExpiresAt).toISOString(), blocked: Boolean(recent), nextAllowedAt: recent ? nextAllowed(recent.submittedAt) : null, privacyNotice: currentSettings.privacyNotice })
     }
     if (method === 'POST') {
       if (payload.surveyExpiresAt <= Date.now()) return json(response, 400, { code: 'SURVEY_EXPIRED', message: 'შეფასების სესიას ვადა გაუვიდა.' })
       if (!Array.isArray(input.ratings) || input.ratings.length !== 3 || new Set(input.ratings.map(item => item.serviceType)).size !== 3 || input.ratings.some(item => !serviceTypes.includes(item.serviceType) || item.score < 1 || item.score > 5)) return json(response, 400, { message: 'სამივე შეფასება სავალდებულოა.' })
       const idempotencyKey = String(input.idempotencyKey || '').trim()
       if (!idempotencyKey || idempotencyKey.length > 100) return json(response, 400, { message: 'შეფასების მოთხოვნა არასწორია.' })
-      const duplicate = directoryStore ? await directoryStore.findResponseByIdempotencyKey(idempotencyKey) : (idempotencyKeys.has(idempotencyKey) ? { id: idempotencyKeys.get(idempotencyKey), submittedAt: new Date().toISOString() } : null)
-      if (duplicate) return json(response, 200, { responseId: duplicate.id, duplicate: true, nextAllowedAt: nextAllowedAt(duplicate.submittedAt) })
+      const duplicate = directoryStore ? await directoryStore.findResponseByIdempotencyKey(idempotencyKey) : (idempotencyKeys.has(idempotencyKey) ? idempotencyKeys.get(idempotencyKey) : null)
+      if (duplicate) return json(response, 200, { responseId: duplicate.id, duplicate: true, nextAllowedAt: nextAllowed(duplicate.submittedAt) })
       const hash = deviceHash(getOrSetDeviceToken(request, response))
       const cutoff = new Date(Date.now() - repeatWindowMs).toISOString()
-      const recent = directoryStore
+      const recent = repeatWindowMs === 0 ? null : directoryStore
         ? await directoryStore.findRecentResponse(hash, cutoff)
-        : deviceResponses.filter(item => item.deviceTokenHash === hash && new Date(item.submittedAt) >= new Date(cutoff)).sort((a, b) => b.submittedAt.localeCompare(a.submittedAt))[0]
-      if (recent) return json(response, 429, { code: 'REPEAT_BLOCKED', message: 'შეფასება უკვე დაფიქსირებულია.', nextAllowedAt: nextAllowedAt(recent.submittedAt) })
+        : deviceResponses.filter(item => item.deviceTokenHash === hash && new Date(item.submittedAt) > new Date(cutoff)).sort((a, b) => b.submittedAt.localeCompare(a.submittedAt))[0]
+      if (recent) return json(response, 429, { code: 'REPEAT_BLOCKED', message: 'შეფასება უკვე დაფიქსირებულია.', nextAllowedAt: nextAllowed(recent.submittedAt) })
       if (!directoryStore && completedSessions.has(payload.sessionId)) return json(response, 409, { code: 'SESSION_COMPLETED', message: 'ამ QR კოდით შეფასება უკვე დაფიქსირებულია.' })
       const responseId = crypto.randomUUID()
       const submittedAt = new Date().toISOString()
@@ -370,16 +380,16 @@ export default async function handler(request, response) {
         const created = await directoryStore.createResponse({ id: responseId, sessionId: payload.sessionId, deviceTokenHash: hash, submittedAt, plantId: payload.plantId, operatorId: payload.operatorId, idempotencyKey }, cleanRatings, cutoff)
         if (!created) {
           const latest = await directoryStore.findRecentResponse(hash, cutoff)
-          if (latest) return json(response, 429, { code: 'REPEAT_BLOCKED', message: 'შეფასება უკვე დაფიქსირებულია.', nextAllowedAt: nextAllowedAt(latest.submittedAt) })
+          if (latest) return json(response, 429, { code: 'REPEAT_BLOCKED', message: 'შეფასება უკვე დაფიქსირებულია.', nextAllowedAt: nextAllowed(latest.submittedAt) })
           return json(response, 409, { code: 'SESSION_COMPLETED', message: 'ამ QR კოდით შეფასება უკვე დაფიქსირებულია.' })
         }
       } else {
         for (const item of cleanRatings) ratings.push({ ...item, responseId, submittedAt, plantId: payload.plantId, plant: payload.plantName, operatorId: payload.operatorId, operator: payload.operatorName })
         deviceResponses.push({ responseId, deviceTokenHash: hash, submittedAt })
-        idempotencyKeys.set(idempotencyKey, responseId)
+        idempotencyKeys.set(idempotencyKey, { id: responseId, submittedAt })
         completedSessions.add(payload.sessionId)
       }
-      return json(response, 200, { responseId, duplicate: false, nextAllowedAt: nextAllowedAt(submittedAt), message: 'გმადლობთ შეფასებისთვის!' })
+      return json(response, 200, { responseId, duplicate: false, nextAllowedAt: nextAllowed(submittedAt), message: 'გმადლობთ შეფასებისთვის!' })
     }
   }
 
@@ -431,7 +441,7 @@ export default async function handler(request, response) {
     if (method === 'DELETE') {
       const hasOperators = directoryStore ? await directoryStore.plantHasOperators(id) : operators.some(item => item.plantId === id)
       if (hasOperators) return json(response, 409, { message: 'ქარხანა დაკავშირებულია ოპერატორთან და ვერ წაიშლება.' })
-      if (directoryStore) await directoryStore.deletePlant(id)
+      if (directoryStore) await directoryStore.deactivatePlant(id)
       else plants = plants.filter(item => item.id !== id)
       audit('Delete', 'Plant', id); return noContent(response)
     }
@@ -456,15 +466,22 @@ export default async function handler(request, response) {
       audit('Update', 'Operator', id); return json(response, 200, updated)
     }
     if (method === 'DELETE') {
-      const hasRatings = directoryStore ? await directoryStore.operatorHasRatings(id) : ratings.some(item => item.operatorId === id)
-      if (hasRatings) return json(response, 409, { message: 'ოპერატორი დაკავშირებულია შეფასებებთან და ვერ წაიშლება.' })
-      if (directoryStore) await directoryStore.deleteOperator(id)
+      if (directoryStore) await directoryStore.deactivateOperator(id)
       else operators = operators.filter(item => item.id !== id)
       audit('Delete', 'Operator', id); return noContent(response)
     }
   }
-  if (path === 'admin/settings' && method === 'GET') return json(response, 200, settings)
-  if (path === 'admin/settings' && method === 'PUT') { settings = { ...settings, ...Object.fromEntries(Object.entries(input).map(([key, value]) => [key, String(value)])) }; audit('Update', 'ApplicationSettings', 'global'); return noContent(response) }
+  if (path === 'admin/settings' && method === 'GET') return json(response, 200, { ...settings, ...(directoryStore ? await directoryStore.getSettings() : {}) })
+  if (path === 'admin/settings' && method === 'PUT') {
+    if (Object.hasOwn(input, 'repeatWindowDays') && (!/^(0|[1-9]\d{0,3})$/.test(String(input.repeatWindowDays)) || Number(input.repeatWindowDays) > 3650)) {
+      return json(response, 400, { message: 'მიუთითეთ დღეების მთელი რაოდენობა 0-დან 3650-მდე.' })
+    }
+    const values = Object.fromEntries(Object.entries(input).map(([key, value]) => [key, String(value)]))
+    if (directoryStore) await directoryStore.saveSettings(values)
+    else settings = { ...settings, ...values }
+    audit('Update', 'ApplicationSettings', 'global')
+    return noContent(response)
+  }
   if (path === 'admin/audit' && method === 'GET') return json(response, 200, audits.slice(0, Math.min(500, Math.max(1, Number(request.query.take || 100)))))
 
   return json(response, 404, { message: `Route not found: ${method} /${path}` })

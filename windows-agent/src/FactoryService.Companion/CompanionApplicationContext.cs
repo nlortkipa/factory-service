@@ -5,108 +5,97 @@ namespace FactoryService.Companion;
 
 internal sealed class CompanionApplicationContext : ApplicationContext
 {
-    private AgentConfig _config;
     private readonly NotifyIcon _trayIcon;
     private readonly Control _uiDispatcher;
     private readonly System.Windows.Forms.Timer _refreshTimer;
-    private bool _refreshing;
+    private readonly ConsoleSession _session = new();
+    private readonly QrRefreshController _refresh;
+    private readonly Func<AgentConfig> _loadConfiguration;
+    private bool _exiting;
 
-    public CompanionApplicationContext()
+    public CompanionApplicationContext(bool installed = false)
     {
-        try { _config = AgentConfigStore.EnsureExists(); }
-        catch (Exception exception) { AgentLog.User($"configuration load failed; using defaults: {exception}"); _config = new AgentConfig(); }
+        _loadConfiguration = installed ? AgentConfigStore.LoadUserConfiguration : AgentConfigStore.LoadOrDefault;
+        try
+        {
+            if (installed) AgentConfigStore.EnsureUserConfiguration();
+            else AgentConfigStore.EnsureExists();
+        }
+        catch (Exception exception) { AgentLog.User($"configuration load failed: {exception}"); }
 
         var menu = new ContextMenuStrip();
-        menu.Items.Add("Refresh Turmo QR", null, async (_, _) => await RefreshQrAsync());
+        menu.Items.Add("Refresh Turmo QR", null, async (_, _) => await _refresh!.TickAsync(force: true));
         menu.Items.Add("Open survey in browser", null, async (_, _) => await OpenSurveyAsync());
         menu.Items.Add("Exit", null, (_, _) => ExitThread());
         _trayIcon = new NotifyIcon { Icon = SystemIcons.Application, Text = "Kartuli Cement — შეფასება", ContextMenuStrip = menu, Visible = true };
-        _trayIcon.DoubleClick += async (_, _) => await RefreshQrAsync();
+        _trayIcon.DoubleClick += async (_, _) => await _refresh!.TickAsync(force: true);
 
         _uiDispatcher = new Control(); _uiDispatcher.CreateControl();
-        _refreshTimer = new System.Windows.Forms.Timer { Interval = 60 * 1000 };
-        _refreshTimer.Tick += async (_, _) => await RefreshQrAsync();
+        _refresh = new QrRefreshController(_session, new TurmoPanelDisplay(), _loadConfiguration,
+            RequestQrAsync, exception =>
+            {
+                AgentLog.User($"Turmo QR refresh failed: {exception}");
+                if (!_exiting) _trayIcon.ShowBalloonTip(5000, "Factory Service", exception.Message, ToolTipIcon.Warning);
+            });
+        // Poll ownership as well as listening for notifications: Fast User Switching and
+        // console reconnects must be detected even if a session notification is missed.
+        _refreshTimer = new System.Windows.Forms.Timer { Interval = 1000 };
+        _refreshTimer.Tick += async (_, _) => await _refresh.TickAsync();
         _refreshTimer.Start();
-
         SystemEvents.SessionSwitch += OnSessionSwitch;
         Application.Idle += ShowInitialQr;
-        AgentLog.User($"companion started; operator={_config.OperatorId}; config={AgentConfigStore.ConfigPath}");
+        AgentLog.User($"companion started; user={Environment.UserName}; config={(installed ? AgentConfigStore.UserConfigPath : AgentConfigStore.ConfigPath)}");
     }
 
     private async void ShowInitialQr(object? sender, EventArgs eventArgs)
     {
         Application.Idle -= ShowInitialQr;
-        await RefreshQrAsync();
+        await _refresh.TickAsync();
     }
 
-    private async void OnSessionSwitch(object sender, SessionSwitchEventArgs eventArgs)
+    private void OnSessionSwitch(object sender, SessionSwitchEventArgs eventArgs)
     {
         AgentLog.User($"session switch; reason={eventArgs.Reason}");
-        if (eventArgs.Reason is SessionSwitchReason.SessionUnlock or SessionSwitchReason.SessionLogon or SessionSwitchReason.RemoteConnect)
-            await RefreshQrAsync();
-    }
-
-    private async Task RefreshQrAsync()
-    {
-        if (_refreshing) return; _refreshing = true;
+        // SystemEvents can run off the UI thread. Serialize controller state on the UI loop.
+        if (_exiting || !_uiDispatcher.IsHandleCreated) return;
         try
         {
-            AgentQrResponse response = await RequestQrAsync();
-            await TurmoPanelDisplay.ShowQrAsync(response);
-            AgentLog.User($"Turmo QR refreshed; expires={response.ExpiresAt:O}; operator={response.OperatorName}");
-        }
-        catch (Exception exception)
-        {
-            AgentLog.User($"Turmo QR refresh failed: {exception}");
-            if (exception is not TurmoPanelException)
+            _uiDispatcher.BeginInvoke(new Action(async () =>
             {
-                string detail = exception is AgentApiException apiException && !string.IsNullOrWhiteSpace(apiException.HelpdeskReference)
-                    ? $"{apiException.Message}\n{apiException.HelpdeskReference}" : "სერვერთან კავშირი ვერ დამყარდა";
-                try { await TurmoPanelDisplay.ShowUnavailableAsync(detail); }
-                catch (Exception panelException) { AgentLog.User($"Turmo unavailable screen failed: {panelException}"); }
-            }
-
-            _trayIcon.ShowBalloonTip(5000, "Factory Service", exception.Message, ToolTipIcon.Warning);
+                if (!_exiting) await _refresh.TickAsync();
+            }));
         }
-        finally { _refreshing = false; }
+        catch (InvalidOperationException) when (_exiting) { }
     }
 
     private async Task OpenSurveyAsync()
     {
         try
         {
-            AgentQrResponse response = await RequestQrAsync();
+            if (!_session.CanPublish) return;
+            AgentConfig config = QrRefreshController.LoadConfiguredOperator(_loadConfiguration);
+            AgentQrResponse response = await RequestQrAsync(config, null, CancellationToken.None);
+            if (_exiting || !_session.CanPublish || _loadConfiguration() != config) return;
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(response.SurveyUrl) { UseShellExecute = true });
-        }
-        catch (Exception exception) { MessageBox.Show(exception.Message, "Factory Service", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
-    }
-
-    private async Task<AgentQrResponse> RequestQrAsync()
-    {
-        ReloadConfiguration();
-        using var api = new AgentApiClient(_config);
-        return await api.RequestQrAsync();
-    }
-
-    private void ReloadConfiguration()
-    {
-        try
-        {
-            AgentConfig latestConfig = AgentConfigStore.LoadOrDefault();
-            if (latestConfig == _config) return;
-
-            _config = latestConfig;
-            AgentLog.User($"configuration reloaded; operator={_config.OperatorId}; config={AgentConfigStore.ConfigPath}");
         }
         catch (Exception exception)
         {
-            AgentLog.User($"configuration reload failed; keeping last valid configuration: {exception}");
+            if (!_exiting) MessageBox.Show(exception.Message, "Factory Service", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
+    }
+
+    private static async Task<AgentQrResponse> RequestQrAsync(AgentConfig config, string? currentToken, CancellationToken cancellationToken)
+    {
+        using var api = new AgentApiClient(config);
+        return await api.RequestQrAsync(cancellationToken, currentToken);
     }
 
     protected override void ExitThreadCore()
     {
-        SystemEvents.SessionSwitch -= OnSessionSwitch; _refreshTimer.Stop(); _refreshTimer.Dispose();
+        _exiting = true;
+        Application.Idle -= ShowInitialQr;
+        SystemEvents.SessionSwitch -= OnSessionSwitch;
+        _refreshTimer.Stop(); _refreshTimer.Dispose(); _refresh.Dispose();
         _trayIcon.Visible = false; _trayIcon.Dispose(); _uiDispatcher.Dispose();
         AgentLog.User("companion stopped"); base.ExitThreadCore();
     }

@@ -1,4 +1,4 @@
 {
-  "apiBaseUrl": "https://factory-service.example.ge",
+  "apiBaseUrl": "https://factory-service.vercel.app",
   "operatorId": "COPY-FROM-THE-OPERATOR-RECORD"
 }

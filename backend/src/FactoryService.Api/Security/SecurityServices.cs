@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Encodings.Web;
@@ -49,7 +50,11 @@ public sealed class QrTokenService(IOptions<FactoryOptions> options)
 
     public string Create(QrTokenPayload payload)
     {
-        string body = Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(payload)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        // The database already stores the operator, plant and nonce for this session.
+        byte[] bytes = new byte[24];
+        payload.SessionId.TryWriteBytes(bytes);
+        BinaryPrimitives.WriteInt64BigEndian(bytes.AsSpan(16), payload.ExpiresAt);
+        string body = "q1_" + Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
         return $"{body}.{SecureHash.Hmac(body, _options.QrSigningKey)}";
     }
 
@@ -60,9 +65,17 @@ public sealed class QrTokenService(IOptions<FactoryOptions> options)
         if (parts.Length != 2 || !SecureHash.FixedEquals(SecureHash.Hmac(parts[0], _options.QrSigningKey), parts[1])) return false;
         try
         {
-            string base64 = parts[0].Replace('-', '+').Replace('_', '/');
+            bool compact = parts[0].StartsWith("q1_", StringComparison.Ordinal);
+            string base64 = (compact ? parts[0][3..] : parts[0]).Replace('-', '+').Replace('_', '/');
             base64 = base64.PadRight(base64.Length + ((4 - base64.Length % 4) % 4), '=');
-            payload = JsonSerializer.Deserialize<QrTokenPayload>(Convert.FromBase64String(base64));
+            byte[] bytes = Convert.FromBase64String(base64);
+            if (compact)
+            {
+                if (bytes.Length != 24) return false;
+                payload = new QrTokenPayload(new Guid(bytes.AsSpan(0, 16)), Guid.Empty, Guid.Empty, 0,
+                    BinaryPrimitives.ReadInt64BigEndian(bytes.AsSpan(16)), "");
+            }
+            else payload = JsonSerializer.Deserialize<QrTokenPayload>(bytes);
             return payload is not null && (!requireUnexpired || payload.ExpiresAt > DateTimeOffset.UtcNow.ToUnixTimeSeconds());
         }
         catch { return false; }

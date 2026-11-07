@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <UseWindowsForms>true</UseWindowsForms>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/FactoryService.Companion/FactoryService.Companion.csproj" />
+    <ProjectReference Include="../../src/FactoryService.Service/FactoryService.Service.csproj" />
+  </ItemGroup>
+</Project>

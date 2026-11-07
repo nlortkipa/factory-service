@@ -1,36 +1,90 @@
 using System.Drawing.Imaging;
 using System.IO.Ports;
 using System.Management;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using FactoryService.Common;
 using QRCoder;
 
 namespace FactoryService.Companion;
 
-internal static class TurmoPanelDisplay
+internal sealed class TurmoPanelDisplay : IPanelDisplay
 {
     private const int PanelWidth = 320;
     private const int PanelHeight = 480;
+    private const int QrSize = 276;
+    private const int QrTop = 90;
+    private const float DesignDpi = 96f;
     private const int BaudRate = 115200;
     private static readonly string[] TurmoDeviceIdentifiers = ["USB35INCHIPSV2", "TURMO"];
 
-    public static Task ShowQrAsync(AgentQrResponse response) => SendAsync(() => RenderQr(response));
+    public Task ShowQrAsync(AgentQrResponse response, Func<bool> canWrite, CancellationToken cancellationToken)
+        => SendAsync(() => RenderQr(response), canWrite, cancellationToken);
 
-    public static Task ShowUnavailableAsync(string detail) => SendAsync(() => RenderUnavailable(detail));
+    public Task ShowUnavailableAsync(string detail, Func<bool> canWrite, CancellationToken cancellationToken)
+        => SendAsync(() => RenderUnavailable(detail), canWrite, cancellationToken);
 
-    private static Task SendAsync(Func<Bitmap> render) => Task.Run(() =>
+    private static Task SendAsync(Func<Bitmap> render, Func<bool> canWrite, CancellationToken cancellationToken) => Task.Run(() =>
     {
         try
         {
-            using Bitmap image = render();
-            Send(image);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!canWrite()) return;
+            using Mutex mutex = CreatePanelMutex();
+            bool acquired = false;
+            try
+            {
+                // Keep acquisition and release on this worker thread. The Global namespace
+                // and explicit ACL serialize complete frames across Windows users/sessions.
+                try
+                {
+                    int result = WaitHandle.WaitAny([mutex, cancellationToken.WaitHandle], TimeSpan.FromSeconds(15));
+                    if (result == WaitHandle.WaitTimeout) throw new TimeoutException("The Turmo panel is busy.");
+                    if (result == 1) throw new OperationCanceledException(cancellationToken);
+                    acquired = true;
+                }
+                catch (AbandonedMutexException) { acquired = true; }
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!canWrite()) return;
+                using Bitmap image = render();
+                Send(image, () => !cancellationToken.IsCancellationRequested && canWrite());
+                // Finish a serial frame rather than leaving a partial command. If ownership
+                // changed during the transfer, erase it before releasing the global mutex;
+                // the new owner cannot have published a newer frame while we hold it.
+                bool stillAllowed;
+                try { stillAllowed = !cancellationToken.IsCancellationRequested && canWrite(); }
+                catch { stillAllowed = false; }
+                if (!stillAllowed)
+                {
+                    using Bitmap unavailable = RenderUnavailable("შეფასება დროებით მიუწვდომელია");
+                    Send(unavailable, () => true);
+                    throw new OperationCanceledException();
+                }
+            }
+            finally { if (acquired) mutex.ReleaseMutex(); }
         }
-        catch (Exception exception) when (exception is not TurmoPanelException)
+        catch (Exception exception) when (exception is not TurmoPanelException and not OperationCanceledException)
         {
             throw new TurmoPanelException($"Could not update the Turmo panel: {exception.Message}", exception);
         }
     });
 
-    private static Bitmap RenderQr(AgentQrResponse response)
+    internal static Mutex CreatePanelMutex()
+    {
+        const string name = @"Global\FactoryService.TurmoPanel";
+        const MutexRights rights = MutexRights.Synchronize | MutexRights.Modify;
+        try { return MutexAcl.OpenExisting(name, rights); }
+        catch (WaitHandleCannotBeOpenedException)
+        {
+            var security = new MutexSecurity();
+            security.AddAccessRule(new MutexAccessRule(new SecurityIdentifier(WellKnownSidType.AuthenticatedUserSid, null),
+                rights, AccessControlType.Allow));
+            try { return MutexAcl.Create(false, name, out _, security); }
+            catch (UnauthorizedAccessException) { return MutexAcl.OpenExisting(name, rights); }
+        }
+    }
+
+    internal static Bitmap RenderQr(AgentQrResponse response)
     {
         var image = CreateCanvas();
         using Graphics graphics = Graphics.FromImage(image);
@@ -38,25 +92,46 @@ internal static class TurmoPanelDisplay
 
         DrawHeader(graphics);
 
-        byte[] qrBytes = PngByteQRCodeHelper.GetQRCode(response.SurveyUrl, QRCodeGenerator.ECCLevel.Q, 14);
-        using var stream = new MemoryStream(qrBytes);
-        using var qrSource = new Bitmap(stream);
-        graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
-        graphics.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Half;
-        graphics.DrawImage(qrSource, new Rectangle(31, 102, 258, 258));
+        using var generator = new QRCodeGenerator();
+        using var qrData = generator.CreateQrCode(response.SurveyUrl, QRCodeGenerator.ECCLevel.Q);
+        DrawQr(graphics, qrData);
 
-        using var promptFont = new Font("Sylfaen", 15, FontStyle.Bold);
-        using var contextFont = new Font("Sylfaen", 10);
-        using var operatorFont = new Font("Sylfaen", 10, FontStyle.Bold);
-        using var plantFont = new Font("Sylfaen", 8);
+        using var promptFont = CreateFixedFont("Sylfaen", 15, FontStyle.Bold);
+        using var contextFont = CreateFixedFont("Sylfaen", 10);
+        using var operatorFont = CreateFixedFont("Sylfaen", 10, FontStyle.Bold);
+        using var plantFont = CreateFixedFont("Sylfaen", 9);
         DrawCentered(graphics, "დაასკანერეთ QR კოდი", promptFont, Color.FromArgb(25, 53, 81), 367, 25);
         DrawCentered(graphics, "და შეაფასეთ მომსახურება", contextFont, Color.FromArgb(105, 118, 128), 395, 20);
 
         using var operatorBackground = new SolidBrush(Color.FromArgb(232, 246, 238));
-        graphics.FillRectangle(operatorBackground, 18, 419, 284, 31);
+        graphics.FillRectangle(operatorBackground, 18, 419, 284, 59);
         DrawCentered(graphics, $"ოპერატორი: {response.OperatorName}", operatorFont, Color.FromArgb(0, 125, 56), 425, 20);
-        DrawCentered(graphics, response.PlantName, plantFont, Color.FromArgb(105, 118, 128), 456, 18);
+        DrawCentered(graphics, $"ქარხანა: {response.PlantName}", plantFont, Color.FromArgb(0, 125, 56), 449, 26);
         return image;
+    }
+
+    private static void DrawQr(Graphics graphics, QRCodeData qrData)
+    {
+        int moduleCount = qrData.ModuleMatrix.Count;
+        int left = (PanelWidth - QrSize) / 2;
+        using var dark = new SolidBrush(Color.Black);
+
+        // Map module boundaries onto one fixed-size square. Integer division gives
+        // each module a hard 3-7 px edge (depending on QR density), while the last
+        // boundary always lands at QrSize. This avoids the large size drop caused
+        // by flooring one pixels-per-module value for denser/longer URLs.
+        for (int row = 0; row < moduleCount; row++)
+        {
+            int top = QrTop + row * QrSize / moduleCount;
+            int bottom = QrTop + (row + 1) * QrSize / moduleCount;
+            for (int column = 0; column < moduleCount; column++)
+            {
+                if (!qrData.ModuleMatrix[row][column]) continue;
+                int x = left + column * QrSize / moduleCount;
+                int right = left + (column + 1) * QrSize / moduleCount;
+                graphics.FillRectangle(dark, x, top, right - x, bottom - top);
+            }
+        }
     }
 
     private static Bitmap RenderUnavailable(string detail)
@@ -70,9 +145,9 @@ internal static class TurmoPanelDisplay
         graphics.DrawEllipse(pen, 85, 137, 150, 150);
         graphics.DrawLine(pen, 112, 164, 208, 260);
 
-        using var titleFont = new Font("Sylfaen", 14, FontStyle.Bold);
-        using var detailFont = new Font("Sylfaen", 9);
-        using var helpdeskFont = new Font("Segoe UI", 10, FontStyle.Bold);
+        using var titleFont = CreateFixedFont("Sylfaen", 14, FontStyle.Bold);
+        using var detailFont = CreateFixedFont("Sylfaen", 9);
+        using var helpdeskFont = CreateFixedFont("Segoe UI", 10, FontStyle.Bold);
         DrawCentered(graphics, "შეფასება დროებით მიუწვდომელია", titleFont, Color.FromArgb(25, 53, 81), 320, 48);
         DrawCentered(graphics, detail, detailFont, Color.FromArgb(105, 118, 128), 374, 48);
 
@@ -82,14 +157,25 @@ internal static class TurmoPanelDisplay
         return image;
     }
 
-    private static Bitmap CreateCanvas() => new(PanelWidth, PanelHeight, PixelFormat.Format24bppRgb);
+    private static Bitmap CreateCanvas()
+    {
+        var image = new Bitmap(PanelWidth, PanelHeight, PixelFormat.Format24bppRgb);
+        image.SetResolution(DesignDpi, DesignDpi);
+        return image;
+    }
+
+    internal static Font CreateFixedFont(string familyName, float pointSize, FontStyle style = FontStyle.Regular)
+        // Fonts are expressed in pixels so Windows display scaling cannot change the
+        // layout of the fixed 320x480 hardware frame. At 96 DPI this preserves the
+        // same visual size as the original point-based values.
+        => new(familyName, pointSize * DesignDpi / 72f, style, GraphicsUnit.Pixel);
 
     private static void DrawHeader(Graphics graphics)
     {
         using var background = new SolidBrush(Color.FromArgb(0, 156, 69));
         graphics.FillRectangle(background, 0, 0, PanelWidth, 88);
-        using var brandFont = new Font("Segoe UI", 16, FontStyle.Bold);
-        using var subtitleFont = new Font("Sylfaen", 10);
+        using var brandFont = CreateFixedFont("Segoe UI", 16, FontStyle.Bold);
+        using var subtitleFont = CreateFixedFont("Sylfaen", 10);
         DrawCentered(graphics, "KARTULI CEMENT", brandFont, Color.White, 18, 27);
         DrawCentered(graphics, "მომსახურების შეფასება", subtitleFont, Color.White, 54, 22);
     }
@@ -106,7 +192,7 @@ internal static class TurmoPanelDisplay
         graphics.DrawString(text, font, brush, new RectangleF(12, y, PanelWidth - 24, height), format);
     }
 
-    private static void Send(Bitmap image)
+    private static void Send(Bitmap image, Func<bool> canWrite)
     {
         string portName = FindTurmoPort();
 
@@ -128,6 +214,7 @@ internal static class TurmoPanelDisplay
         }
 
         byte[] pixels = ToRgb565LittleEndian(image);
+        if (!canWrite()) throw new OperationCanceledException();
         SendCommand(port, command: 197, x: 0, y: 0, endX: PanelWidth - 1, endY: PanelHeight - 1);
         for (int offset = 0; offset < pixels.Length; offset += PanelWidth * 8)
         {

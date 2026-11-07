@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
+    "test": "node --test api/*.test.js",
     "build": "npm --prefix frontend ci && npm --prefix frontend run build"
   },
   "engines": {

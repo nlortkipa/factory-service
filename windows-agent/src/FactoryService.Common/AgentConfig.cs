@@ -6,7 +6,7 @@ namespace FactoryService.Common;
 public sealed record AgentConfig
 {
     [JsonPropertyName("apiBaseUrl")]
-    public string ApiBaseUrl { get; init; } = "http://localhost:5000";
+    public string ApiBaseUrl { get; init; } = "https://factory-service.vercel.app";
 
     [JsonPropertyName("operatorId")]
     public string OperatorId { get; init; } = "";
@@ -32,27 +32,49 @@ public static class AgentConfigStore
             Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
             ApplicationDirectoryName);
 
-    public static string ConfigPath => Environment.GetEnvironmentVariable("FACTORY_SERVICE_CONFIG")
-        ?? Path.Combine(ConfigDirectory, "config.json");
+    public static string UserConfigPath => Path.Combine(ConfigDirectory, "config.json");
+
+    public static string ConfigPath => Environment.GetEnvironmentVariable("FACTORY_SERVICE_CONFIG") ?? UserConfigPath;
+
+    // Installed companions never accept a shared machine/operator override. Development
+    // launches keep the existing environment overrides for the local dev launcher.
+    public static AgentConfig LoadUserConfiguration() => Load(UserConfigPath, applyOverrides: false);
+    public static AgentConfig EnsureUserConfiguration() => Ensure(UserConfigPath, applyOverrides: false);
 
     public static AgentConfig LoadOrDefault()
     {
-        AgentConfig config = File.Exists(ConfigPath) ? Deserialize(ConfigPath) : new AgentConfig();
-        return ApplyEnvironmentOverrides(config);
+        return Load(ConfigPath, applyOverrides: true);
     }
 
     public static AgentConfig EnsureExists()
     {
-        if (!File.Exists(ConfigPath))
+        return Ensure(ConfigPath, applyOverrides: true);
+    }
+
+    private static AgentConfig Load(string path, bool applyOverrides)
+    {
+        AgentConfig config = File.Exists(path) ? Deserialize(path) : new AgentConfig();
+        return applyOverrides ? ApplyEnvironmentOverrides(config) : config;
+    }
+
+    private static AgentConfig Ensure(string path, bool applyOverrides)
+    {
+        if (!File.Exists(path))
         {
             AgentConfig config = new();
 
-            string? directory = Path.GetDirectoryName(Path.GetFullPath(ConfigPath));
+            string? directory = Path.GetDirectoryName(Path.GetFullPath(path));
             if (directory is not null) Directory.CreateDirectory(directory);
-            File.WriteAllText(ConfigPath, JsonSerializer.Serialize(config, JsonOptions));
-            return ApplyEnvironmentOverrides(config);
+            // Multiple startup paths may race; never overwrite a config created by another.
+            try
+            {
+                using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+                JsonSerializer.Serialize(stream, config, JsonOptions);
+            }
+            catch (IOException) when (File.Exists(path)) { return Load(path, applyOverrides); }
+            return applyOverrides ? ApplyEnvironmentOverrides(config) : config;
         }
-        return LoadOrDefault();
+        return Load(path, applyOverrides);
     }
 
     private static AgentConfig ApplyEnvironmentOverrides(AgentConfig config)

@@ -102,13 +102,29 @@ public static class FactoryServiceEndpoints
         {
             string operatorId = request.OperatorId?.Trim() ?? "";
             if (operatorId.Length is 0 or > 64)
-                return Results.BadRequest(new { code = "INVALID_OPERATOR_ID", message = "Operator ID is required." });
+                return Results.BadRequest(new { code = "INVALID_OPERATOR_ID", message = "მიუთითეთ სწორი ოპერატორის ID." });
             FactoryOperator? factoryOperator = await db.Operators.Include(x => x.Plant)
-                .SingleOrDefaultAsync(x => x.OperatorId == operatorId);
+                .SingleOrDefaultAsync(x => x.OperatorId == operatorId && x.IsActive && x.Plant!.IsActive);
             if (factoryOperator is null)
                 return Results.NotFound(new { code = "OPERATOR_NOT_FOUND", message = "ოპერატორი ვერ მოიძებნა." });
 
             DateTimeOffset now = DateTimeOffset.UtcNow;
+            if (!string.IsNullOrEmpty(request.CurrentToken)
+                && tokens.TryValidate(request.CurrentToken, out QrTokenPayload? current) && current is not null)
+            {
+                QrSession? existing = await db.QrSessions.SingleOrDefaultAsync(x => x.Id == current.SessionId
+                    && x.TokenHash == SecureHash.Sha256(request.CurrentToken));
+                if (existing is not null && existing.Status == QrSessionStatus.Active && existing.ExpiresAt > now
+                    && existing.OperatorId == factoryOperator.Id && existing.PlantId == factoryOperator.PlantId)
+                    return Results.Ok(new
+                    {
+                        token = request.CurrentToken,
+                        surveyUrl = $"{PublicUrlResolver.Resolve(options.Value.PublicBaseUrl)}/s/{Uri.EscapeDataString(request.CurrentToken)}",
+                        expiresAt = existing.ExpiresAt,
+                        operatorName = factoryOperator.DisplayName,
+                        plantName = factoryOperator.Plant!.Name
+                    });
+            }
             var session = new QrSession
             {
                 OperatorId = factoryOperator.Id, PlantId = factoryOperator.PlantId,
@@ -146,7 +162,8 @@ public static class FactoryServiceEndpoints
             string deviceHash = SecureHash.Sha256(deviceToken);
             RespondentDevice? device = await db.RespondentDevices.SingleOrDefaultAsync(x => x.DeviceTokenHash == deviceHash);
             DateTimeOffset? last = device is null ? null : await db.SurveyResponses.Where(x => x.RespondentDeviceId == device.Id && !x.IsTest).MaxAsync(x => (DateTimeOffset?)x.SubmittedAt);
-            DateTimeOffset? next = last?.AddDays(options.Value.RepeatWindowDays);
+            int repeatWindowDays = await RepeatWindowDaysAsync(db, options.Value);
+            DateTimeOffset? next = last?.AddDays(repeatWindowDays);
             bool blocked = next > DateTimeOffset.UtcNow;
             if (session.OpenedAt is null)
             {
@@ -177,8 +194,9 @@ public static class FactoryServiceEndpoints
                 request.Ratings.Any(x => x.Score is < 1 or > 5 || (x.Comment?.Length ?? 0) > 1000))
                 return Results.ValidationProblem(new Dictionary<string, string[]> { ["ratings"] = ["სამივე შეფასება, 1-დან 5 ქულამდე, სავალდებულოა."] });
 
+            int repeatWindowDays = await RepeatWindowDaysAsync(db, options.Value);
             SurveyResponse? duplicate = await db.SurveyResponses.SingleOrDefaultAsync(x => x.IdempotencyKey == request.IdempotencyKey);
-            if (duplicate is not null) return Results.Ok(new { responseId = duplicate.Id, duplicate = true, nextAllowedAt = duplicate.SubmittedAt.AddDays(options.Value.RepeatWindowDays) });
+            if (duplicate is not null) return Results.Ok(new { responseId = duplicate.Id, duplicate = true, nextAllowedAt = duplicate.SubmittedAt.AddDays(repeatWindowDays) });
 
             string deviceHash = SecureHash.Sha256(GetOrSetDeviceToken(context, options.Value.DeviceCookieSecure));
             RespondentDevice? device = await db.RespondentDevices.SingleOrDefaultAsync(x => x.DeviceTokenHash == deviceHash);
@@ -186,11 +204,11 @@ public static class FactoryServiceEndpoints
             if (device is not null)
             {
                 DateTimeOffset? last = await db.SurveyResponses.Where(x => x.RespondentDeviceId == device.Id && !x.IsTest).MaxAsync(x => (DateTimeOffset?)x.SubmittedAt);
-                if (last?.AddDays(options.Value.RepeatWindowDays) > now)
+                if (last?.AddDays(repeatWindowDays) > now)
                 {
-                    db.RateLimitDecisions.Add(new RateLimitDecision { KeyHash = deviceHash, Scope = "Global", WindowStart = last.Value, WindowEnd = last.Value.AddDays(options.Value.RepeatWindowDays), Decision = "Blocked", Reason = "Completed response exists in rolling window" });
+                    db.RateLimitDecisions.Add(new RateLimitDecision { KeyHash = deviceHash, Scope = "Global", WindowStart = last.Value, WindowEnd = last.Value.AddDays(repeatWindowDays), Decision = "Blocked", Reason = "Completed response exists in rolling window" });
                     await db.SaveChangesAsync();
-                    return Results.Json(new { code = "REPEAT_BLOCKED", message = "შეფასება უკვე დაფიქსირებულია.", nextAllowedAt = last.Value.AddDays(options.Value.RepeatWindowDays) }, statusCode: 429);
+                    return Results.Json(new { code = "REPEAT_BLOCKED", message = "შეფასება უკვე დაფიქსირებულია.", nextAllowedAt = last.Value.AddDays(repeatWindowDays) }, statusCode: 429);
                 }
                 device.LastSeen = now;
             }
@@ -218,7 +236,7 @@ public static class FactoryServiceEndpoints
             db.SurveyResponses.Add(response);
             session.Status = QrSessionStatus.Completed;
             await db.SaveChangesAsync();
-            return Results.Ok(new { responseId = response.Id, duplicate = false, nextAllowedAt = now.AddDays(options.Value.RepeatWindowDays), message = "გმადლობთ შეფასებისთვის!" });
+            return Results.Ok(new { responseId = response.Id, duplicate = false, nextAllowedAt = now.AddDays(repeatWindowDays), message = "გმადლობთ შეფასებისთვის!" });
         });
     }
 
@@ -240,7 +258,7 @@ public static class FactoryServiceEndpoints
 
         group.MapGet("/plants", async (FactoryDbContext db, ClaimsPrincipal user) =>
         {
-            IQueryable<Plant> query = db.Plants.AsNoTracking();
+            IQueryable<Plant> query = db.Plants.AsNoTracking().Where(x => x.IsActive);
             if (user.PlantScope() is Guid scope) query = query.Where(x => x.Id == scope);
             return Results.Ok(await query.OrderBy(x => x.Name).Select(x => new { x.Id, x.Name, x.Address, x.TimeZone }).ToListAsync());
         }).RequireAuthorization("Reports");
@@ -258,21 +276,16 @@ public static class FactoryServiceEndpoints
         }).RequireAuthorization("Manage");
         group.MapDelete("/plants/{id:guid}", async (Guid id, FactoryDbContext db, ClaimsPrincipal user, HttpContext context) =>
         {
-            if (!user.IsSystemAdmin()) return Results.Forbid(); Plant? entity = await db.Plants.FindAsync(id); if (entity is null) return Results.NotFound();
-            bool hasOperators = await db.Operators.AnyAsync(x => x.PlantId == id);
+            if (!user.IsSystemAdmin()) return Results.Forbid(); Plant? entity = await db.Plants.FindAsync(id); if (entity is null || !entity.IsActive) return Results.NotFound();
+            bool hasOperators = await db.Operators.AnyAsync(x => x.PlantId == id && x.IsActive);
             if (hasOperators) return Results.Conflict(new { message = "ქარხანა დაკავშირებულია ოპერატორთან და ვერ წაიშლება." });
-            bool isUsed = await db.QrSessions.AnyAsync(x => x.PlantId == id)
-                || await db.SurveyResponses.AnyAsync(x => x.PlantId == id)
-                || await db.Ratings.AnyAsync(x => x.PlantId == id)
-                || await db.PortalUsers.AnyAsync(x => x.PlantId == id);
-            if (isUsed) return Results.Conflict(new { message = "ქარხანა დაკავშირებულია სხვა ჩანაწერებთან და ვერ წაიშლება." });
-            string before = JsonSerializer.Serialize(entity); db.Plants.Remove(entity); await db.SaveChangesAsync();
+            string before = JsonSerializer.Serialize(entity); entity.IsActive = false; await db.SaveChangesAsync();
             await AuditAsync(db, user.UserId(), "Delete", "Plant", id.ToString(), before, "", context); return Results.NoContent();
         }).RequireAuthorization("Manage");
 
         group.MapGet("/operators", async (FactoryDbContext db, ClaimsPrincipal user) =>
         {
-            IQueryable<FactoryOperator> query = db.Operators.AsNoTracking().Include(x => x.Plant);
+            IQueryable<FactoryOperator> query = db.Operators.AsNoTracking().Include(x => x.Plant).Where(x => x.IsActive);
             if (user.PlantScope() is Guid scope) query = query.Where(x => x.PlantId == scope);
             return Results.Ok(await query.OrderBy(x => x.DisplayName).Select(x => new { x.Id, x.OperatorId, x.DisplayName, x.PlantId, PlantName = x.Plant!.Name }).ToListAsync());
         }).RequireAuthorization("Reports");
@@ -290,18 +303,26 @@ public static class FactoryServiceEndpoints
         }).RequireAuthorization("Manage");
         group.MapDelete("/operators/{id:guid}", async (Guid id, FactoryDbContext db, ClaimsPrincipal user, HttpContext context) =>
         {
-            FactoryOperator? entity = await db.Operators.FindAsync(id); if (entity is null) return Results.NotFound(); if (!CanAccessPlant(user, entity.PlantId)) return Results.Forbid();
-            bool isUsed = await db.QrSessions.AnyAsync(x => x.OperatorId == id)
-                || await db.SurveyResponses.AnyAsync(x => x.OperatorId == id)
-                || await db.Ratings.AnyAsync(x => x.OperatorId == id);
-            if (isUsed) return Results.Conflict(new { message = "ოპერატორი დაკავშირებულია შეფასებებთან და ვერ წაიშლება." });
-            string before = JsonSerializer.Serialize(entity); db.Operators.Remove(entity); await db.SaveChangesAsync();
+            FactoryOperator? entity = await db.Operators.FindAsync(id); if (entity is null || !entity.IsActive) return Results.NotFound(); if (!CanAccessPlant(user, entity.PlantId)) return Results.Forbid();
+            string before = JsonSerializer.Serialize(entity);
+            entity.IsActive = false;
+            entity.EffectiveTo = DateTimeOffset.UtcNow;
+            await db.QrSessions.Where(x => x.OperatorId == id && x.Status == QrSessionStatus.Active)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(x => x.Status, QrSessionStatus.Revoked));
+            await db.SaveChangesAsync();
             await AuditAsync(db, user.UserId(), "Delete", "Operator", id.ToString(), before, "", context); return Results.NoContent();
         }).RequireAuthorization("Manage");
 
-        group.MapGet("/settings", async (FactoryDbContext db) => Results.Ok(await db.Settings.AsNoTracking().ToDictionaryAsync(x => x.Key, x => x.Value))).RequireAuthorization("SystemAdmin");
+        group.MapGet("/settings", async (FactoryDbContext db, IOptions<FactoryOptions> options) =>
+        {
+            var values = await db.Settings.AsNoTracking().ToDictionaryAsync(x => x.Key, x => x.Value);
+            values["repeatWindowDays"] = (await RepeatWindowDaysAsync(db, options.Value)).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            return Results.Ok(values);
+        }).RequireAuthorization("SystemAdmin");
         group.MapPut("/settings", async (Dictionary<string, string> values, FactoryDbContext db, ClaimsPrincipal user, HttpContext context) =>
         {
+            if (values.TryGetValue("repeatWindowDays", out string? days) && !ValidRepeatWindowDays(days, out _))
+                return Results.BadRequest(new { message = "მიუთითეთ დღეების მთელი რაოდენობა 0-დან 3650-მდე." });
             foreach ((string key, string value) in values)
             {
                 ApplicationSetting? setting = await db.Settings.FindAsync(key);
@@ -317,12 +338,13 @@ public static class FactoryServiceEndpoints
         }).RequireAuthorization("Reports");
     }
 
-    private static async Task<IResult> DashboardAsync(FactoryDbContext db, ClaimsPrincipal user, DateTimeOffset? from, DateTimeOffset? to, Guid? plantId)
+    private static async Task<IResult> DashboardAsync(FactoryDbContext db, ClaimsPrincipal user, DateTimeOffset? from, DateTimeOffset? to, Guid? plantId, Guid? operatorId)
     {
         DateTimeOffset start = from ?? DateTimeOffset.UtcNow.AddDays(-30); DateTimeOffset end = to ?? DateTimeOffset.UtcNow.AddDays(1);
         if (user.PlantScope() is Guid scope) plantId = scope;
         IQueryable<SurveyResponse> baseQuery = db.SurveyResponses.AsNoTracking().Where(x => !x.IsTest && x.SubmittedAt >= start && x.SubmittedAt < end);
         if (plantId is Guid selected) baseQuery = baseQuery.Where(x => x.PlantId == selected);
+        if (operatorId is Guid selectedOperator) baseQuery = baseQuery.Where(x => x.OperatorId == selectedOperator);
         var responses = await baseQuery.Include(x => x.Plant).Include(x => x.Ratings).ToListAsync();
         int total = responses.Count; int uniqueDevices = responses.Select(x => x.RespondentDeviceId).Distinct().Count();
         var ratings = responses.SelectMany(x => x.Ratings).ToList();
@@ -397,6 +419,18 @@ public static class FactoryServiceEndpoints
         else if (score is >= 1 and <= 5)
             query = query.Where(x => x.Ratings.Any(rating => rating.Score == score));
         return query;
+    }
+
+    private static bool ValidRepeatWindowDays(string? value, out int days)
+    {
+        days = 0;
+        return value is not null && Regex.IsMatch(value, @"^(0|[1-9]\d{0,3})$") && int.TryParse(value, out days) && days <= 3650;
+    }
+
+    private static async Task<int> RepeatWindowDaysAsync(FactoryDbContext db, FactoryOptions options)
+    {
+        string? value = await db.Settings.AsNoTracking().Where(x => x.Key == "repeatWindowDays").Select(x => x.Value).SingleOrDefaultAsync();
+        return ValidRepeatWindowDays(value, out int days) ? days : Math.Clamp(options.RepeatWindowDays, 0, 3650);
     }
 
     private static int RatingScore(SurveyResponse response, ServiceType type) =>

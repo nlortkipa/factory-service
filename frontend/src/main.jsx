@@ -10,7 +10,7 @@ const serviceCopy = {
   Loading: { title: 'დატვირთვის მომსახურება', subtitle: 'ქარხნის მიხედვით' },
 }
 const scoreLabels = ['ძალიან ცუდი', 'ცუდი', 'საშუალო', 'კარგი', 'შესანიშნავი']
-const icons = { dashboard: '⌁', responses: '≡', plants: '◇', operators: '◎' }
+const icons = { dashboard: '⌁', responses: '≡', plants: '◇', operators: '◎', settings: '⚙' }
 const adminBypass = import.meta.env.VITE_ADMIN_BYPASS === 'true'
 
 function createIdempotencyKey() {
@@ -134,19 +134,72 @@ function Login({ onAuthenticated }) {
 function Portal({ onLogout }) {
   const [tab, setTab] = useState('dashboard')
   const [user, setUser] = useState(null)
-  const tabs = [['dashboard','მიმოხილვა'],['responses','შეფასებები'],['plants','ქარხნები'],['operators','ოპერატორები']]
+  const tabs = [['dashboard','მიმოხილვა'],['responses','შეფასებები'],['plants','ქარხნები'],['operators','ოპერატორები'], ...(user?.role === 'SystemAdministrator' ? [['settings','პარამეტრები']] : [])]
   useEffect(() => { api('/api/auth/me').then(setUser).catch(() => {}) }, [])
-  return <div className="portal"><aside className="sidebar"><div className="sidebar-brand"><span>KC</span><strong>KARTULI<br/>CEMENT</strong></div><nav>{tabs.map(([key,label]) => <button key={key} className={tab === key ? 'active' : ''} onClick={() => setTab(key)}><i>{icons[key]}</i><span>{label}</span></button>)}</nav><button className="logout" onClick={onLogout}>გასვლა</button></aside><div className="portal-main"><header className="topbar"><div><p className="eyebrow dark">მომსახურების შეფასების სისტემა</p><h1>{tabs.find(x => x[0] === tab)?.[1]}</h1></div><div className="user-chip"><span>{user?.displayName?.[0] || 'A'}</span><div><b>{user?.displayName || 'ადმინისტრატორი'}</b><small>{roleName(user?.role)}</small></div></div></header><main className="content">{tab === 'dashboard' && <Dashboard />}{tab === 'responses' && <Responses canDelete={user?.role === 'SystemAdministrator'} />}{tab === 'plants' && <Directory type="plants" />}{tab === 'operators' && <Directory type="operators" />}</main></div></div>
+  return <div className="portal"><aside className="sidebar"><div className="sidebar-brand"><span>KC</span><strong>KARTULI<br/>CEMENT</strong></div><nav>{tabs.map(([key,label]) => <button key={key} className={tab === key ? 'active' : ''} onClick={() => setTab(key)}><i>{icons[key]}</i><span>{label}</span></button>)}</nav><button className="logout" onClick={onLogout}>გასვლა</button></aside><div className="portal-main"><header className="topbar"><div><p className="eyebrow dark">მომსახურების შეფასების სისტემა</p><h1>{tabs.find(x => x[0] === tab)?.[1]}</h1></div><div className="user-chip"><span>{user?.displayName?.[0] || 'A'}</span><div><b>{user?.displayName || 'ადმინისტრატორი'}</b><small>{roleName(user?.role)}</small></div></div></header><main className="content">{tab === 'dashboard' && <Dashboard />}{tab === 'responses' && <Responses canDelete={user?.role === 'SystemAdministrator'} />}{tab === 'plants' && <Directory type="plants" />}{tab === 'operators' && <Directory type="operators" />}{tab === 'settings' && user?.role === 'SystemAdministrator' && <RatingSettings />}</main></div></div>
 }
 
 function Dashboard() {
   const [data, setData] = useState(null)
   const [plants, setPlants] = useState([])
-  const [filters, setFilters] = useState({ plantId: '', from: isoDate(-30), to: isoDate(1) })
-  useEffect(() => { api('/api/admin/plants').then(setPlants) }, [])
-  useEffect(() => { api(`/api/admin/dashboard?${queryParams(filters)}`).then(setData) }, [filters])
-  if (!data) return <Loading />
-  return <><section className="filter-bar"><label>პერიოდი<input type="date" value={filters.from} onChange={e => setFilters({ ...filters, from: e.target.value })}/></label><span>—</span><label><span className="sr-only">დასასრული</span><input type="date" value={filters.to} onChange={e => setFilters({ ...filters, to: e.target.value })}/></label><label>ქარხანა<select value={filters.plantId} onChange={e => setFilters({ ...filters, plantId: e.target.value })}><option value="">ყველა</option>{plants.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label></section><section className="metric-grid"><Metric label="სულ შეფასება" value={formatNumber(data.total)} /><Metric label="გაყიდვები" value={data.sales.average} /><Metric label="სასწორი" value={data.scale.average} /><Metric label="დატვირთვა" value={data.loading.average} /></section><section className="dashboard-grid"><article className="panel trend-panel"><PanelTitle title="ქულის დინამიკა" note="სამივე მომსახურების საშუალო"/><TrendChart data={data.trend}/></article><article className="panel"><PanelTitle title="ქარხნების შედარება" note="საშუალო ქულა"/><div className="plant-bars">{data.plants.map((plant,index) => <div key={plant.id}><span>{index + 1}</span><b>{plant.name}</b><div><i style={{width:`${plant.average / 5 * 100}%`}}/></div><strong>{plant.average}</strong></div>)}</div><p className="blocked-note">{data.blockedAttempts} დაბლოკილი განმეორებითი მცდელობა პერიოდში</p></article></section></>
+  const [operators, setOperators] = useState([])
+  const [error, setError] = useState('')
+  const [filters, setFilters] = useState({ plantId: '', operatorId: '', from: isoDate(-30), to: isoDate(1) })
+  useEffect(() => {
+    let active = true
+    Promise.all([api('/api/admin/plants'), api('/api/admin/operators')]).then(([p, o]) => { if (active) { setPlants(p); setOperators(o) } }).catch(e => { if (active) setError(e.message) })
+    return () => { active = false }
+  }, [])
+  useEffect(() => {
+    let active = true
+    setError(''); setData(null)
+    api('/api/admin/dashboard?' + queryParams(filters)).then(value => { if (active) setData(value) }).catch(e => { if (active) setError(e.message) })
+    return () => { active = false }
+  }, [filters])
+  return <>
+    <section className="filter-bar" aria-label="მიმოხილვის ფილტრები">
+      <label>პერიოდი<input type="date" value={filters.from} onChange={e => setFilters({ ...filters, from: e.target.value })}/></label><span>—</span>
+      <label><span className="sr-only">დასასრული</span><input type="date" value={filters.to} onChange={e => setFilters({ ...filters, to: e.target.value })}/></label>
+      <label>ქარხანა<select value={filters.plantId} onChange={e => setFilters({ ...filters, plantId: e.target.value, operatorId: '' })}><option value="">ყველა</option>{plants.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
+      <label>ოპერატორი<select value={filters.operatorId} onChange={e => setFilters({ ...filters, operatorId: e.target.value })}><option value="">ყველა ოპერატორი</option>{operators.filter(o => !filters.plantId || o.plantId === filters.plantId).map(o => <option key={o.id} value={o.id}>{o.displayName}</option>)}</select></label>
+    </section>
+    {error && <p className="form-error" role="alert">{error}</p>}
+    {!data && !error && <Loading />}
+    {data && <><section className="metric-grid"><Metric label="სულ შეფასება" value={formatNumber(data.total)} /><Metric label="გაყიდვები" value={data.sales.average} /><Metric label="სასწორი" value={data.scale.average} /><Metric label="დატვირთვა" value={data.loading.average} /></section><section className="dashboard-grid"><article className="panel trend-panel"><PanelTitle title="ქულის დინამიკა" note="სამივე მომსახურების საშუალო"/><TrendChart data={data.trend}/></article><article className="panel"><PanelTitle title="ქარხნების შედარება" note="საშუალო ქულა"/><div className="plant-bars">{data.plants.map((plant,index) => <div key={plant.id}><span>{index + 1}</span><b>{plant.name}</b><div><i style={{width: (plant.average / 5 * 100) + '%'}}/></div><strong>{plant.average}</strong></div>)}</div></article></section></>}
+  </>
+}
+
+function RatingSettings() {
+  const [days, setDays] = useState('')
+  const [state, setState] = useState({ loading: true, saving: false, error: '', saved: false })
+  useEffect(() => {
+    let active = true
+    api('/api/admin/settings').then(data => { if (active) { setDays(data.repeatWindowDays); setState(s => ({ ...s, loading: false })) } })
+      .catch(e => { if (active) setState(s => ({ ...s, loading: false, error: e.message })) })
+    return () => { active = false }
+  }, [])
+  const save = async event => {
+    event.preventDefault()
+    if (!/^(0|[1-9]\d{0,3})$/.test(days) || Number(days) > 3650) {
+      setState(s => ({ ...s, error: 'მიუთითეთ დღეების მთელი რაოდენობა 0-დან 3650-მდე.', saved: false })); return
+    }
+    setState(s => ({ ...s, saving: true, error: '', saved: false }))
+    try {
+      await api('/api/admin/settings', { method: 'PUT', body: JSON.stringify({ repeatWindowDays: days }) })
+      setState(s => ({ ...s, saving: false, saved: true }))
+    } catch (e) { setState(s => ({ ...s, saving: false, error: e.message })) }
+  }
+  return <section className="panel rating-settings">
+    <PanelTitle title="შეფასების სიხშირე" note="განმეორებით შეფასებამდე მოცდის პერიოდი" />
+    {state.loading ? <Loading /> : <form onSubmit={save}>
+      <label htmlFor="repeat-window-days">რამდენი დღის შემდეგ შეიძლება ხელახლა შეფასება?</label>
+      <input id="repeat-window-days" type="number" min="0" max="3650" step="1" required value={days} disabled={state.saving} aria-describedby="repeat-window-help" onChange={e => { setDays(e.target.value); setState(s => ({ ...s, saved: false, error: '' })) }} />
+      <p className="field-help" id="repeat-window-help">პერიოდი ითვლება ბოლო შეფასებიდან და მოქმედებს ყველა ქარხანასა და ოპერატორზე. 0 დღე გამორთავს მოცდის პერიოდს. ცვლილება მოქმედებს წინა შეფასებებზეც. მომხმარებელი ამოიცნობა იმავე ბრაუზერისა და მოწყობილობის მიხედვით.</p>
+      {state.error && <p className="form-error" role="alert">{state.error}</p>}
+      {state.saved && <p className="settings-success" role="status">პარამეტრი შენახულია.</p>}
+      <button className="primary-button" disabled={state.saving || days === ''}>{state.saving ? 'ინახება…' : 'შენახვა'}</button>
+    </form>}
+  </section>
 }
 
 function Metric({ label, value }) { return <article className="metric"><p>{label}</p><div><strong>{value}</strong></div></article> }
@@ -252,28 +305,48 @@ function Directory({ type }) {
   const [references, setReferences] = useState({ plants: [] })
   const [editing, setEditing] = useState(null)
   const [error, setError] = useState('')
+  const [revision, setRevision] = useState(0)
+  const [pending, setPending] = useState(false)
   const [filters, setFilters] = useState({ name:'', address:'', plantId:'' })
   const titles = { plants: 'ქარხნების რეესტრი', operators: 'ოპერატორები' }
-  const load = () => api(`/api/admin/${type}`).then(setItems)
-  useEffect(() => { load(); if (type === 'operators') api('/api/admin/plants').then(plants => setReferences({ plants })) }, [type])
+  const load = () => setRevision(value => value + 1)
+  useEffect(() => {
+    let active = true
+    setError('')
+    Promise.all([api(`/api/admin/${type}`), type === 'operators' ? api('/api/admin/plants') : Promise.resolve([])])
+      .then(([records, plants]) => { if (active) { setItems(records); setReferences({ plants }) } })
+      .catch(error => { if (active) setError(error.message) })
+    return () => { active = false }
+  }, [type, revision])
   const filteredItems = useMemo(() => (items || []).filter(item => type === 'plants'
     ? matchesText(item.name, filters.name) && matchesText(item.address, filters.address)
-    : matchesText(item.displayName, filters.name) && (!filters.plantId || item.plantId === filters.plantId)
+    : (matchesText(item.displayName, filters.name) || matchesText(item.operatorId, filters.name)) && (!filters.plantId || item.plantId === filters.plantId)
   ), [items, filters, type])
-  if (!items) return <Loading />
-  const save = async value => { setError(''); try { await api(`/api/admin/${type}${value.id ? `/${value.id}` : ''}`, { method:value.id ? 'PUT' : 'POST', body:JSON.stringify(value) }); setEditing(null); load() } catch(e) { setError(e.message) } }
-  const remove = async item => {
-    if (!confirm('ჩანაწერი სამუდამოდ წაიშლება. გაგრძელდეს?')) return
-    setError('')
-    try { await api(`/api/admin/${type}/${item.id}`, {method:'DELETE'}); load() } catch(e) { setError(e.message) }
+  if (!items) return error ? <div className="panel directory-load-error"><p role="alert">{error}</p><button className="small-button" onClick={load}>ხელახლა ცდა</button></div> : <Loading />
+  const save = async value => {
+    if (pending) return
+    setError(''); setPending(true)
+    try { await api(`/api/admin/${type}${value.id ? `/${value.id}` : ''}`, { method:value.id ? 'PUT' : 'POST', body:JSON.stringify(value) }); setEditing(null); load() }
+    catch(e) { setError(e.message) }
+    finally { setPending(false) }
   }
-  const actions = item => <div className="row-actions"><button className="row-action" onClick={() => setEditing(item)}>შეცვლა</button><button className="row-action delete" onClick={() => remove(item)}>წაშლა</button></div>
-  const config = type === 'plants' ? { cols:['დასახელება','მისამართი',''], rows:filteredItems.map(x => [x.name,x.address,actions(x)]) } : { cols:['Operator ID','სახელი','ქარხანა',''], rows:filteredItems.map(x => [<code>{x.operatorId}</code>,x.displayName,x.plantName,actions(x)]) }
+  const remove = async item => {
+    if (pending) return
+    const message = type === 'operators'
+      ? 'ოპერატორი წაიშლება აქტიური სიიდან. არსებული შეფასებები და ანგარიშები შენარჩუნდება. გაგრძელდეს?'
+      : 'ქარხანა წაიშლება აქტიური სიიდან. არსებული შეფასებები და ანგარიშები შენარჩუნდება. გაგრძელდეს?'
+    if (!confirm(message)) return
+    setError(''); setPending(true)
+    try { await api(`/api/admin/${type}/${item.id}`, {method:'DELETE'}); load() } catch(e) { setError(e.message) }
+    finally { setPending(false) }
+  }
+  const actions = item => <div className="row-actions"><button className="row-action" disabled={pending} onClick={() => { setError(''); setEditing(item) }}>შეცვლა</button><button className="row-action delete" disabled={pending} onClick={() => remove(item)}>წაშლა</button></div>
+  const config = type === 'plants' ? { cols:['დასახელება','მისამართი',''], rows:filteredItems.map(x => [x.name,x.address,actions(x)]) } : { cols:['ოპერატორი','ქარხანა','კლიენტის პროგრამა',''], rows:filteredItems.map(x => [<div className="operator-summary" key={x.id}><strong>{x.displayName}</strong><OperatorId value={x.operatorId}/></div>,x.plantName,<ClientDownload operator={x}/>,actions(x)]) }
   return <div className="directory-page">
     <section className={`filter-bar directory-filters ${type === 'plants' ? 'plant-filters' : ''}`} aria-label={`${titles[type]} — ფილტრები`}>
       <label>
-        {type === 'plants' ? 'დასახელება' : 'სახელი'}
-        <input type="search" value={filters.name} onChange={event => setFilters({ ...filters, name:event.target.value })} placeholder={type === 'plants' ? 'ქარხნის დასახელება' : 'ოპერატორის სახელი'}/>
+        {type === 'plants' ? 'დასახელება' : 'სახელი ან Operator ID'}
+        <input type="search" value={filters.name} onChange={event => setFilters({ ...filters, name:event.target.value })} placeholder={type === 'plants' ? 'ქარხნის დასახელება' : 'ოპერატორის სახელი ან ID'}/>
       </label>
       {type === 'plants' ? <label>
         მისამართი
@@ -290,20 +363,69 @@ function Directory({ type }) {
     <section className="panel table-panel">
       <div className="table-toolbar">
         <div><h2>{titles[type]}</h2><p>{filteredItems.length === items.length ? `${items.length} ჩანაწერი` : `${filteredItems.length} / ${items.length} ჩანაწერი`}</p></div>
-        <button className="small-button" onClick={() => { setError(''); setEditing({ timeZone:'Asia/Tbilisi', plantId:references.plants[0]?.id || '' }) }}>+ შექმნა</button>
+        <button className="small-button" disabled={pending || (type === 'operators' && !references.plants.length)} onClick={() => { setError(''); setEditing({ timeZone:'Asia/Tbilisi', plantId:references.plants[0]?.id || '' }) }}>+ შექმნა</button>
       </div>
-      {error && !editing && <p className="directory-error">{error}</p>}
+      {type === 'operators' && <div className="client-distribution-note"><span aria-hidden="true">↓</span><div><strong>ერთი პერსონალიზებული EXE თითო ოპერატორზე</strong><p>გადმოწერილი launcher ავტომატურად მიუთითებს სერვერსა და Operator ID-ს, შემდეგ აყენებს ან შლის Windows კლიენტს.</p></div></div>}
+      {type === 'operators' && !references.plants.length && <p className="directory-help">ოპერატორის დამატებამდე შექმენით ქარხანა ქარხნების რეესტრში.</p>}
+      {error && !editing && <p className="directory-error" role="alert">{error} <button className="row-action" onClick={load}>ხელახლა ცდა</button></p>}
       <DataTable columns={config.cols} rows={config.rows}/>
     </section>
-    {editing && <DirectoryEditor type={type} value={editing} references={references} error={error} onClose={() => setEditing(null)} onSave={save}/>}
+    {editing && <DirectoryEditor type={type} value={editing} references={references} error={error} pending={pending} onClose={() => { if (!pending) setEditing(null) }} onSave={save}/>}
   </div>
 }
 
-function DirectoryEditor({ type, value, references, error, onClose, onSave }) {
+function OperatorId({ value }) {
+  const [status, setStatus] = useState('')
+  useEffect(() => { setStatus('') }, [value])
+  useEffect(() => {
+    if (status !== 'copied') return
+    const timer = setTimeout(() => setStatus(''), 2500)
+    return () => clearTimeout(timer)
+  }, [status])
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(value); setStatus('copied') }
+    catch { setStatus('failed') }
+  }
+  return <div className="operator-id"><div><input aria-label="Operator ID" readOnly value={value} onFocus={event => event.target.select()}/><button type="button" className="row-action" onClick={copy} aria-label="Operator ID-ის კოპირება">{status === 'copied' ? 'დაკოპირებულია' : 'კოპირება'}</button></div><span role="status">{status === 'failed' ? 'კოპირება ვერ მოხერხდა. მონიშნეთ ID და დააკოპირეთ ხელით.' : status === 'copied' ? 'Operator ID დაკოპირებულია.' : ''}</span></div>
+}
+
+function ClientDownload({ operator }) {
+  const [state, setState] = useState({ busy:false, error:'' })
+  const download = async () => {
+    setState({ busy:true, error:'' })
+    try {
+      const response = await fetch('/downloads/FactoryService.Setup.exe', { cache:'no-store' })
+      if (!response.ok) throw new Error('Launcher ჯერ არ არის გამოქვეყნებული. გაუშვით client packaging script.')
+      const executable = new Uint8Array(await response.arrayBuffer())
+      const origin = window.location.origin.replace(/\/$/, '')
+      const config = new TextEncoder().encode(JSON.stringify({
+        apiBaseUrl: origin,
+        payloadUrl: `${origin}/downloads/FactoryServiceClient-win-x64.zip`,
+        operatorId: operator.operatorId,
+        operatorName: operator.displayName,
+        plantName: operator.plantName
+      }))
+      const marker = new TextEncoder().encode('FSCONFIGv1')
+      const length = new Uint8Array(4)
+      new DataView(length.buffer).setUint32(0, config.length, true)
+      const blob = new Blob([executable, config, marker, length], { type:'application/vnd.microsoft.portable-executable' })
+      const href = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = href
+      link.download = `FactoryService-${safeFileName(operator.displayName)}-Setup.exe`
+      document.body.appendChild(link); link.click(); link.remove()
+      setTimeout(() => URL.revokeObjectURL(href), 1000)
+      setState({ busy:false, error:'' })
+    } catch (error) { setState({ busy:false, error:error.message }) }
+  }
+  return <div className="client-download"><button type="button" disabled={state.busy} onClick={download}><span aria-hidden="true">↓</span>{state.busy ? 'მზადდება…' : 'EXE-ის გადმოწერა'}</button>{state.error && <small role="alert">{state.error}</small>}</div>
+}
+
+function DirectoryEditor({ type, value, references, error, pending, onClose, onSave }) {
   const [form,setForm] = useState(value)
   const set = (key,next) => setForm(current => ({...current,[key]:next}))
   const submit = event => { event.preventDefault(); onSave(form) }
-  return <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && onClose()}><form className="editor-modal" onSubmit={submit}><header><div><p className="eyebrow dark">{value.id ? 'ჩანაწერის შეცვლა' : 'ჩანაწერის შექმნა'}</p><h2>{type === 'plants' ? 'ქარხანა' : 'ოპერატორი'}</h2></div><button type="button" onClick={onClose} aria-label="დახურვა">×</button></header>{type === 'plants' && <div className="editor-grid"><label>დასახელება<input required value={form.name || ''} onChange={e=>set('name',e.target.value)}/></label><label className="wide">მისამართი<input value={form.address || ''} onChange={e=>set('address',e.target.value)}/></label><label>დროის სარტყელი<input value={form.timeZone || ''} onChange={e=>set('timeZone',e.target.value)}/></label></div>}{type === 'operators' && <div className="editor-grid">{form.operatorId && <label className="wide">Operator ID<input readOnly value={form.operatorId}/></label>}<label>სახელი და გვარი<input required value={form.displayName || ''} onChange={e=>set('displayName',e.target.value)}/></label><label>ქარხანა<select required value={form.plantId || ''} onChange={e=>set('plantId',e.target.value)}>{references.plants.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select></label></div>}{error && <p className="form-error">{error}</p>}<footer><span/><button type="button" className="text-button" onClick={onClose}>გაუქმება</button><button className="small-button">{value.id ? 'შეცვლა' : 'შექმნა'}</button></footer></form></div>
+  return <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && onClose()}><form className="editor-modal" onSubmit={submit}><header><div><p className="eyebrow dark">{value.id ? 'ჩანაწერის შეცვლა' : 'ჩანაწერის შექმნა'}</p><h2>{type === 'plants' ? 'ქარხანა' : 'ოპერატორი'}</h2></div><button type="button" onClick={onClose} aria-label="დახურვა">×</button></header>{type === 'plants' && <div className="editor-grid"><label>დასახელება<input required value={form.name || ''} onChange={e=>set('name',e.target.value)}/></label><label className="wide">მისამართი<input value={form.address || ''} onChange={e=>set('address',e.target.value)}/></label><label>დროის სარტყელი<input value={form.timeZone || ''} onChange={e=>set('timeZone',e.target.value)}/></label></div>}{type === 'operators' && <div className="editor-grid">{form.operatorId && <label className="wide">Operator ID<input readOnly value={form.operatorId}/></label>}<label>სახელი და გვარი<input required value={form.displayName || ''} onChange={e=>set('displayName',e.target.value)}/></label><label>ქარხანა<select required value={form.plantId || ''} onChange={e=>set('plantId',e.target.value)}>{references.plants.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select></label></div>}{error && <p className="form-error">{error}</p>}<footer><span/><button type="button" className="text-button" onClick={onClose}>გაუქმება</button><button className="small-button" disabled={pending}>{pending ? 'ინახება…' : value.id ? 'შეცვლა' : 'შექმნა'}</button></footer></form></div>
 }
 
 function DataTable({ columns, rows }) { return <div className="table-scroll"><table><thead><tr>{columns.map(x => <th key={x}>{x}</th>)}</tr></thead><tbody>{rows.length ? rows.map((row,i)=><tr key={i}>{row.map((cell,j)=><td key={j}>{cell}</td>)}</tr>) : <tr><td colSpan={columns.length}>მონაცემები არ მოიძებნა</td></tr>}</tbody></table></div> }
@@ -319,5 +441,6 @@ function responseFilterDefaults() { return { from:isoDate(-30), to:isoDate(0), p
 function queryParams(values) { return new URLSearchParams(Object.entries(values).filter(([,value]) => value !== '' && value != null)).toString() }
 function matchesText(value, search) { return !search.trim() || String(value || '').toLocaleLowerCase('ka-GE').includes(search.trim().toLocaleLowerCase('ka-GE')) }
 function roleName(value) { return ({SystemAdministrator:'სისტემის ადმინისტრატორი',PlantAdministrator:'ქარხნის ადმინისტრატორი',ReportViewer:'რეპორტების ნახვა',Auditor:'აუდიტორი'})[value] || value }
+function safeFileName(value) { return String(value || 'Operator').normalize('NFKD').replace(/[^\p{L}\p{N}.-]+/gu,'-').replace(/^-+|-+$/g,'').slice(0,60) || 'Operator' }
 
 createRoot(document.getElementById('root')).render(<React.StrictMode><App /></React.StrictMode>)

@@ -17,14 +17,16 @@ public sealed class AgentApiClient : IDisposable
         _httpClient = new HttpClient { BaseAddress = new Uri(config.ApiBaseUrl.TrimEnd('/') + "/"), Timeout = TimeSpan.FromSeconds(15) };
     }
 
-    public async Task<AgentQrResponse> RequestQrAsync(CancellationToken cancellationToken = default)
+    public async Task<AgentQrResponse> RequestQrAsync(CancellationToken cancellationToken = default, string? currentToken = null)
     {
-        var request = new { _config.OperatorId };
+        var request = new { _config.OperatorId, CurrentToken = currentToken };
         using HttpResponseMessage response = await _httpClient.PostAsJsonAsync("api/agent/qr", request, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            AgentApiError? error = await response.Content.ReadFromJsonAsync<AgentApiError>(cancellationToken: cancellationToken);
-            throw new AgentApiException(error?.Message ?? $"API error {(int)response.StatusCode}", error?.Code, error?.HelpdeskReference);
+            AgentApiError? error = null;
+            try { error = await response.Content.ReadFromJsonAsync<AgentApiError>(cancellationToken: cancellationToken); }
+            catch (JsonException) { /* A proxy may return HTML or an empty error body. */ }
+            throw new AgentApiException(error?.Message ?? $"სერვერმა დააბრუნა შეცდომა ({(int)response.StatusCode}).", error?.Code, error?.HelpdeskReference);
         }
         return await response.Content.ReadFromJsonAsync<AgentQrResponse>(cancellationToken: cancellationToken)
             ?? throw new InvalidDataException("QR API returned an empty response.");

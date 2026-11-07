@@ -14,3 +14,4 @@ frontend/dist
 *.db
 *.db-shm
 *.db-wal
+api/*.test.js

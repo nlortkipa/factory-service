@@ -9,7 +9,6 @@ param(
 
 $ErrorActionPreference = "Stop"
 $agentRoot = Split-Path -Parent $PSScriptRoot
-$packageSource = Join-Path $agentRoot "client-package"
 $distRoot = Join-Path $agentRoot "dist"
 $packageName = "FactoryServiceClient-$Runtime"
 $packageRoot = Join-Path $distRoot $packageName
@@ -19,7 +18,10 @@ $servicePublish = Join-Path $publishRoot "service"
 $companionPublish = Join-Path $publishRoot "companion"
 $serviceProject = Join-Path $agentRoot "src\FactoryService.Service\FactoryService.Service.csproj"
 $companionProject = Join-Path $agentRoot "src\FactoryService.Companion\FactoryService.Companion.csproj"
+$setupProject = Join-Path $agentRoot "src\FactoryService.Setup\FactoryService.Setup.csproj"
 $zipPath = Join-Path $distRoot "$packageName.zip"
+$setupPath = Join-Path $distRoot "FactoryService.Setup.exe"
+$webDownloads = Join-Path (Split-Path -Parent $agentRoot) "frontend\public\downloads"
 
 $agentRootPrefix = [IO.Path]::GetFullPath($agentRoot).TrimEnd('\') + '\'
 function Assert-UnderAgentRoot {
@@ -61,17 +63,10 @@ try {
     Copy-Item -Path (Join-Path $servicePublish "*") -Destination $payloadRoot -Recurse -Force
     Copy-Item -Path (Join-Path $companionPublish "*") -Destination $payloadRoot -Recurse -Force
     Copy-Item -LiteralPath (Join-Path $agentRoot "scripts\companion-login-guard.cmd") -Destination (Join-Path $payloadRoot "FactoryService.CompanionGuard.cmd") -Force
-    foreach ($packageFile in @("Install.cmd", "Uninstall.cmd", "instruction.txt")) {
-        Copy-Item -LiteralPath (Join-Path $packageSource $packageFile) -Destination (Join-Path $packageRoot $packageFile) -Force
-    }
-
     $requiredFiles = @(
         "payload\FactoryService.Service.exe",
         "payload\FactoryService.Companion.exe",
-        "payload\FactoryService.CompanionGuard.cmd",
-        "Install.cmd",
-        "Uninstall.cmd",
-        "instruction.txt"
+        "payload\FactoryService.CompanionGuard.cmd"
     )
     foreach ($requiredFile in $requiredFiles) {
         if (-not (Test-Path -LiteralPath (Join-Path $packageRoot $requiredFile))) {
@@ -82,14 +77,14 @@ try {
     if (Test-Path -LiteralPath $zipPath) {
         Remove-Item -LiteralPath $zipPath -Force
     }
-    Compress-Archive -Path (Join-Path $packageRoot "*") -DestinationPath $zipPath -CompressionLevel Optimal
+    Compress-Archive -Path (Join-Path $payloadRoot "*") -DestinationPath $zipPath -CompressionLevel Optimal
 
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $archive = [IO.Compression.ZipFile]::OpenRead($zipPath)
     try {
         $archiveEntries = @($archive.Entries | ForEach-Object { $_.FullName.Replace("\", "/") })
         foreach ($requiredFile in $requiredFiles) {
-            $entryName = $requiredFile.Replace("\", "/")
+            $entryName = $requiredFile.Replace("payload\", "").Replace("\", "/")
             if ($entryName -notin $archiveEntries) {
                 throw "ZIP validation failed. Missing $entryName."
             }
@@ -113,11 +108,30 @@ try {
         $zipStream.Dispose()
     }
 
+    $setupPublish = Join-Path $publishRoot "setup"
+    dotnet publish $setupProject `
+        -c $Configuration `
+        -r $Runtime `
+        --self-contained true `
+        -p:PublishSingleFile=true `
+        -p:EnableCompressionInSingleFile=true `
+        -p:DebugType=None `
+        -p:DebugSymbols=false `
+        -o $setupPublish
+    if ($LASTEXITCODE -ne 0) { throw "Setup publish failed with exit code $LASTEXITCODE." }
+    Copy-Item -LiteralPath (Join-Path $setupPublish "FactoryService.Setup.exe") -Destination $setupPath -Force
+
+    New-Item -ItemType Directory -Path $webDownloads -Force | Out-Null
+    Copy-Item -LiteralPath $zipPath -Destination (Join-Path $webDownloads "$packageName.zip") -Force
+    Copy-Item -LiteralPath $setupPath -Destination (Join-Path $webDownloads "FactoryService.Setup.exe") -Force
+
     $sizeMb = [math]::Round((Get-Item -LiteralPath $zipPath).Length / 1MB, 1)
-    Write-Host "Client package ready." -ForegroundColor Green
-    Write-Host "Path: $zipPath"
-    Write-Host "Size: $sizeMb MB"
-    Write-Host "SHA256: $hash"
+    $setupSizeMb = [math]::Round((Get-Item -LiteralPath $setupPath).Length / 1MB, 1)
+    Write-Host "Single-file client distribution ready." -ForegroundColor Green
+    Write-Host "Payload: $zipPath ($sizeMb MB)"
+    Write-Host "Launcher: $setupPath ($setupSizeMb MB)"
+    Write-Host "Web assets: $webDownloads"
+    Write-Host "Payload SHA256: $hash"
     $packageReady = $true
 }
 finally {

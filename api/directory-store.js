@@ -2,21 +2,35 @@ import { neon } from '@neondatabase/serverless'
 
 async function initialize(sql) {
   await sql`
+    CREATE TABLE IF NOT EXISTS factory_service_settings (
+      key text PRIMARY KEY,
+      value text NOT NULL
+    )
+  `
+  await sql`
     CREATE TABLE IF NOT EXISTS factory_service_plants (
       id uuid PRIMARY KEY,
       name text NOT NULL,
       address text NOT NULL DEFAULT '',
-      time_zone text NOT NULL DEFAULT 'Asia/Tbilisi'
+      time_zone text NOT NULL DEFAULT 'Asia/Tbilisi',
+      is_active boolean NOT NULL DEFAULT true,
+      effective_to timestamptz
     )
   `
+  await sql`ALTER TABLE factory_service_plants ADD COLUMN IF NOT EXISTS is_active boolean NOT NULL DEFAULT true`
+  await sql`ALTER TABLE factory_service_plants ADD COLUMN IF NOT EXISTS effective_to timestamptz`
   await sql`
     CREATE TABLE IF NOT EXISTS factory_service_operators (
       id uuid PRIMARY KEY,
       operator_id text NOT NULL UNIQUE,
       display_name text NOT NULL,
-      plant_id uuid NOT NULL REFERENCES factory_service_plants(id) ON DELETE RESTRICT
+      plant_id uuid NOT NULL REFERENCES factory_service_plants(id) ON DELETE RESTRICT,
+      is_active boolean NOT NULL DEFAULT true,
+      effective_to timestamptz
     )
   `
+  await sql`ALTER TABLE factory_service_operators ADD COLUMN IF NOT EXISTS is_active boolean NOT NULL DEFAULT true`
+  await sql`ALTER TABLE factory_service_operators ADD COLUMN IF NOT EXISTS effective_to timestamptz`
   await sql`
     CREATE TABLE IF NOT EXISTS factory_service_survey_responses (
       id uuid PRIMARY KEY,
@@ -59,6 +73,21 @@ class DirectoryStore {
     this.ready = initialize(this.sql)
   }
 
+  async getSettings() {
+    await this.ready
+    const rows = await this.sql`SELECT key, value FROM factory_service_settings`
+    return Object.fromEntries(rows.map(row => [row.key, row.value]))
+  }
+
+  async saveSettings(values) {
+    await this.ready
+    await this.sql`
+      INSERT INTO factory_service_settings (key, value)
+      SELECT key, value FROM jsonb_each_text(${JSON.stringify(values)}::jsonb)
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+    `
+  }
+
   async createMfaChallenge(entity) {
     await this.ready
     await this.sql`
@@ -90,6 +119,7 @@ class DirectoryStore {
     return this.sql`
       SELECT id::text AS id, name, address, time_zone AS "timeZone"
       FROM factory_service_plants
+      WHERE is_active = true
       ORDER BY name, id
     `
   }
@@ -99,7 +129,7 @@ class DirectoryStore {
     const rows = await this.sql`
       SELECT id::text AS id, name, address, time_zone AS "timeZone"
       FROM factory_service_plants
-      WHERE id = ${id}
+      WHERE id = ${id} AND is_active = true
     `
     return rows[0] || null
   }
@@ -129,16 +159,19 @@ class DirectoryStore {
     await this.ready
     const rows = await this.sql`
       SELECT EXISTS(
-        SELECT 1 FROM factory_service_operators WHERE plant_id = ${id}
+        SELECT 1 FROM factory_service_operators WHERE plant_id = ${id} AND is_active = true
       ) AS value
     `
     return rows[0]?.value === true
   }
 
-  async deletePlant(id) {
+  async deactivatePlant(id) {
     await this.ready
     const rows = await this.sql`
-      DELETE FROM factory_service_plants WHERE id = ${id} RETURNING id::text AS id
+      UPDATE factory_service_plants
+      SET is_active = false, effective_to = now()
+      WHERE id = ${id} AND is_active = true
+      RETURNING id::text AS id
     `
     return rows.length > 0
   }
@@ -150,6 +183,7 @@ class DirectoryStore {
              o.plant_id::text AS "plantId", p.name AS "plantName"
       FROM factory_service_operators o
       JOIN factory_service_plants p ON p.id = o.plant_id
+      WHERE o.is_active = true
       ORDER BY o.display_name, o.id
     `
   }
@@ -173,7 +207,7 @@ class DirectoryStore {
              o.plant_id::text AS "plantId", p.name AS "plantName"
       FROM factory_service_operators o
       JOIN factory_service_plants p ON p.id = o.plant_id
-      WHERE o.operator_id = ${operatorId}
+      WHERE o.operator_id = ${operatorId} AND o.is_active = true
     `
     return rows[0] || null
   }
@@ -199,22 +233,25 @@ class DirectoryStore {
     return rows.length ? this.findOperator(rows[0].id) : null
   }
 
-  async deleteOperator(id) {
+  async deactivateOperator(id) {
     await this.ready
     const rows = await this.sql`
-      DELETE FROM factory_service_operators WHERE id = ${id} RETURNING id::text AS id
+      UPDATE factory_service_operators
+      SET is_active = false, effective_to = now()
+      WHERE id = ${id} AND is_active = true
+      RETURNING id::text AS id
     `
     return rows.length > 0
   }
 
-  async operatorHasRatings(id) {
+  async isSessionCompleted(sessionId) {
     await this.ready
     const rows = await this.sql`
-      SELECT EXISTS(
-        SELECT 1 FROM factory_service_survey_responses WHERE operator_id = ${id}
-      ) AS value
+      SELECT EXISTS (
+        SELECT 1 FROM factory_service_survey_responses WHERE session_id = ${sessionId}
+      ) AS completed
     `
-    return rows[0]?.value === true
+    return rows[0]?.completed === true
   }
 
   async findRecentResponse(deviceTokenHash, cutoff) {
@@ -222,7 +259,7 @@ class DirectoryStore {
     const rows = await this.sql`
       SELECT id::text AS id, submitted_at AS "submittedAt"
       FROM factory_service_survey_responses
-      WHERE device_token_hash = ${deviceTokenHash} AND submitted_at >= ${cutoff}
+      WHERE device_token_hash = ${deviceTokenHash} AND submitted_at > ${cutoff}
       ORDER BY submitted_at DESC
       LIMIT 1
     `
@@ -249,7 +286,7 @@ class DirectoryStore {
              ${entity.plantId}, ${entity.operatorId}, ${entity.idempotencyKey}
       WHERE NOT EXISTS (
         SELECT 1 FROM factory_service_survey_responses
-        WHERE device_token_hash = ${entity.deviceTokenHash} AND submitted_at >= ${cutoff}
+        WHERE device_token_hash = ${entity.deviceTokenHash} AND submitted_at > ${cutoff}
       )
       ON CONFLICT DO NOTHING
       RETURNING id::text AS id, submitted_at AS "submittedAt"
