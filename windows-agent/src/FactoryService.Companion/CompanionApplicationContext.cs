@@ -43,6 +43,7 @@ internal sealed class CompanionApplicationContext : ApplicationContext
         _refreshTimer.Tick += async (_, _) => await _refresh.TickAsync();
         _refreshTimer.Start();
         SystemEvents.SessionSwitch += OnSessionSwitch;
+        SystemEvents.SessionEnding += OnSessionEnding;
         Application.Idle += ShowInitialQr;
         AgentLog.User($"companion started; user={Environment.UserName}; config={(installed ? AgentConfigStore.UserConfigPath : AgentConfigStore.ConfigPath)}");
     }
@@ -66,6 +67,25 @@ internal sealed class CompanionApplicationContext : ApplicationContext
             }));
         }
         catch (InvalidOperationException) when (_exiting) { }
+    }
+
+    private void OnSessionEnding(object sender, SessionEndingEventArgs eventArgs)
+    {
+        AgentLog.User($"session ending; reason={eventArgs.Reason}");
+        ClearPanelBeforeExit();
+    }
+
+    private void ClearPanelBeforeExit()
+    {
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            _refresh.ClearAsync(timeout.Token).GetAwaiter().GetResult();
+        }
+        catch (Exception exception)
+        {
+            AgentLog.User($"Turmo panel clear failed during logout: {exception}");
+        }
     }
 
     private async Task OpenSurveyAsync()
@@ -95,7 +115,10 @@ internal sealed class CompanionApplicationContext : ApplicationContext
         _exiting = true;
         Application.Idle -= ShowInitialQr;
         SystemEvents.SessionSwitch -= OnSessionSwitch;
-        _refreshTimer.Stop(); _refreshTimer.Dispose(); _refresh.Dispose();
+        SystemEvents.SessionEnding -= OnSessionEnding;
+        _refreshTimer.Stop(); _refreshTimer.Dispose();
+        ClearPanelBeforeExit();
+        _refresh.Dispose();
         _trayIcon.Visible = false; _trayIcon.Dispose(); _uiDispatcher.Dispose();
         AgentLog.User("companion stopped"); base.ExitThreadCore();
     }

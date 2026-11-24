@@ -199,6 +199,16 @@ var tests = new (string Name, Func<Task> Run)[]
         await admin.TickAsync();
         Check(rig.Screen == "Administrator" && rig.Requests.Count == 2, "Unlock did not refresh");
     }),
+    ("Logout clears QR and prevents any later refresh", async () =>
+    {
+        var rig = new Rig();
+        using var admin = rig.Controller("Administrator");
+        await admin.TickAsync();
+        Check(rig.Screen == "Administrator", "Initial QR missing");
+        await admin.ClearAsync();
+        await admin.TickAsync(force: true);
+        Check(rig.Screen == "unavailable" && rig.Requests.Count == 1, "Logout retained or republished the QR");
+    }),
     ("Unreadable config never reuses the last valid operator", async () =>
     {
         var rig = new Rig();

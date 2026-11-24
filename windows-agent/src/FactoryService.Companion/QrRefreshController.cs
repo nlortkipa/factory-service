@@ -25,6 +25,7 @@ internal sealed class QrRefreshController(
     private CancellationTokenSource? _request;
     private AgentQrResponse? _displayed;
     private AgentConfig? _displayedConfig;
+    private bool _cleared;
 
     public async Task TickAsync(bool force = false)
     {
@@ -109,6 +110,15 @@ internal sealed class QrRefreshController(
         if (string.IsNullOrWhiteSpace(config.OperatorId))
             throw new AgentApiException("ამ Windows მომხმარებლისთვის ოპერატორი არ არის მითითებული", "operator_not_configured", null);
         return config;
+    }
+
+    public async Task ClearAsync(CancellationToken cancellationToken = default)
+    {
+        if (_cleared) return;
+        _cleared = true;
+        _disposed = true;
+        _request?.Cancel();
+        await panel.ShowUnavailableAsync("შეფასება დროებით მიუწვდომელია", () => session.CanClear, cancellationToken);
     }
 
     public void Dispose()
