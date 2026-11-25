@@ -5,7 +5,7 @@ namespace FactoryService.Api.Contracts;
 public sealed record VerifyMfaRequest(Guid ChallengeId, string Code);
 public sealed record AgentQrRequest(string OperatorId, string? CurrentToken = null);
 public sealed record RatingInput(ServiceType ServiceType, int Score, string? Comment);
-public sealed record SurveySubmitRequest(string IdempotencyKey, IReadOnlyList<RatingInput> Ratings);
+public sealed record SurveySubmitRequest(string IdempotencyKey, IReadOnlyList<RatingInput> Ratings, string? CarPlate = null);
 public sealed record PlantInput(string Name, string Address, string TimeZone);
 public sealed record OperatorInput(string DisplayName, Guid PlantId);
 

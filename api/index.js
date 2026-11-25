@@ -35,11 +35,12 @@ const mfaAttempts = new Map()
 
 function createDemoRatings() {
   const scores = [[5, 4, 5], [4, 4, 3], [5, 5, 4], [3, 4, 4], [4, 5, 5]]
+  const carPlates = ['AA123BB', 'TB450KL', 'GE777GE', 'ZZ018AC', 'KM302RT']
   return scores.flatMap((values, responseIndex) => {
     const responseId = crypto.randomUUID()
     const submittedAt = new Date(Date.now() - (responseIndex + 1) * 86400000 * 2).toISOString()
     return serviceTypes.map((serviceType, index) => ({
-      id: crypto.randomUUID(), responseId, submittedAt, plantId, plant: plants[0].name,
+      id: crypto.randomUUID(), responseId, submittedAt, carPlate: carPlates[responseIndex], plantId, plant: plants[0].name,
       operatorId: operatorRecordId, operator: operators[0].displayName, serviceType,
       score: values[index], comment: responseIndex === 1 && index === 0 ? 'მომსახურება სწრაფი იყო.' : ''
     }))
@@ -210,7 +211,7 @@ function responseRows(items, query) {
     const comment = type => rating(type)?.comment?.trim() || ''
     const comments = [...new Set(group.map(item => item.comment.trim()).filter(Boolean))]
     return {
-      id: first.responseId, submittedAt: first.submittedAt, plant: first.plant, operator: first.operator,
+      id: first.responseId, submittedAt: first.submittedAt, carPlate: first.carPlate || '', plant: first.plant, operator: first.operator,
       loadingScore: score('Loading'), loadingComment: comment('Loading'),
       salesScore: score('Sales'), salesComment: comment('Sales'),
       scaleScore: score('Scale'), scaleComment: comment('Scale'),
@@ -245,8 +246,14 @@ function dashboard(allRatings, query) {
 
 function exportCsv(items) {
   const escape = value => `"${String(value ?? '').replaceAll('"', '""')}"`
-  const rows = [['თარიღი', 'ქარხანა', 'ოპერატორი', 'დატვირთვის მომსახურება', 'გაყიდვების ოპერატორი', 'სასწორის მომსასხურება', 'კომენტარი'], ...items.map(item => [item.submittedAt, item.plant, item.operator, item.loadingScore, item.salesScore, item.scaleScore, item.comment])]
+  const rows = [['თარიღი', 'სახელმწიფო ნომერი', 'ქარხანა', 'ოპერატორი', 'დატვირთვის მომსახურება', 'გაყიდვების ოპერატორი', 'სასწორის მომსასხურება', 'კომენტარი'], ...items.map(item => [item.submittedAt, item.carPlate, item.plant, item.operator, item.loadingScore, item.salesScore, item.scaleScore, item.comment])]
   return '\ufeff' + rows.map(row => row.map(escape).join(',')).join('\r\n')
+}
+
+export function normalizeCarPlate(value) {
+  // Accepts AA123AA or AA-123-AA (any case) and stores it as AA123AA.
+  const match = /^([A-Z]{2})-?(\d{3})-?([A-Z]{2})$/.exec(String(value ?? '').trim().toUpperCase())
+  return match ? match.slice(1).join('') : null
 }
 
 function parseGuidPath(path, prefix) {
@@ -362,6 +369,8 @@ export default async function handler(request, response) {
     if (method === 'POST') {
       if (payload.surveyExpiresAt <= Date.now()) return json(response, 400, { code: 'SURVEY_EXPIRED', message: 'შეფასების სესიას ვადა გაუვიდა.' })
       if (!Array.isArray(input.ratings) || input.ratings.length !== 3 || new Set(input.ratings.map(item => item.serviceType)).size !== 3 || input.ratings.some(item => !serviceTypes.includes(item.serviceType) || item.score < 1 || item.score > 5)) return json(response, 400, { message: 'სამივე შეფასება სავალდებულოა.' })
+      const carPlate = normalizeCarPlate(input.carPlate)
+      if (!carPlate) return json(response, 400, { code: 'CAR_PLATE_INVALID', message: 'ნომერი უნდა იყოს ფორმატით AA123AA ან AA-123-AA.' })
       const idempotencyKey = String(input.idempotencyKey || '').trim()
       if (!idempotencyKey || idempotencyKey.length > 100) return json(response, 400, { message: 'შეფასების მოთხოვნა არასწორია.' })
       const duplicate = directoryStore ? await directoryStore.findResponseByIdempotencyKey(idempotencyKey) : (idempotencyKeys.has(idempotencyKey) ? idempotencyKeys.get(idempotencyKey) : null)
@@ -377,14 +386,14 @@ export default async function handler(request, response) {
       const submittedAt = new Date().toISOString()
       const cleanRatings = input.ratings.map(item => ({ id: crypto.randomUUID(), serviceType: item.serviceType, score: Number(item.score), comment: String(item.comment || '').replace(/<[^>]+>/g, '').slice(0, 1000) }))
       if (directoryStore) {
-        const created = await directoryStore.createResponse({ id: responseId, sessionId: payload.sessionId, deviceTokenHash: hash, submittedAt, plantId: payload.plantId, operatorId: payload.operatorId, idempotencyKey }, cleanRatings, cutoff)
+        const created = await directoryStore.createResponse({ id: responseId, sessionId: payload.sessionId, deviceTokenHash: hash, submittedAt, plantId: payload.plantId, operatorId: payload.operatorId, idempotencyKey, carPlate }, cleanRatings, cutoff)
         if (!created) {
           const latest = await directoryStore.findRecentResponse(hash, cutoff)
           if (latest) return json(response, 429, { code: 'REPEAT_BLOCKED', message: 'შეფასება უკვე დაფიქსირებულია.', nextAllowedAt: nextAllowed(latest.submittedAt) })
           return json(response, 409, { code: 'SESSION_COMPLETED', message: 'ამ QR კოდით შეფასება უკვე დაფიქსირებულია.' })
         }
       } else {
-        for (const item of cleanRatings) ratings.push({ ...item, responseId, submittedAt, plantId: payload.plantId, plant: payload.plantName, operatorId: payload.operatorId, operator: payload.operatorName })
+        for (const item of cleanRatings) ratings.push({ ...item, responseId, submittedAt, carPlate, plantId: payload.plantId, plant: payload.plantName, operatorId: payload.operatorId, operator: payload.operatorName })
         deviceResponses.push({ responseId, deviceTokenHash: hash, submittedAt })
         idempotencyKeys.set(idempotencyKey, { id: responseId, submittedAt })
         completedSessions.add(payload.sessionId)

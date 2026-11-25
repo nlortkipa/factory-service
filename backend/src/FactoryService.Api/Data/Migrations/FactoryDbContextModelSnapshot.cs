@@ -459,6 +459,11 @@ namespace FactoryService.Api.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<string>("CarPlate")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
                     b.Property<string>("IdempotencyKey")
                         .IsRequired()
                         .HasMaxLength(100)

@@ -11,7 +11,7 @@ const { default: handler } = await import('./index.js')
 const encoded = Buffer.from(JSON.stringify({ type: 'admin-session', username: process.env.ADMIN_USERNAME || 'admin', expiresAt: Date.now() + 864000000 })).toString('base64url')
 const authorization = `Bearer ${encoded}.${crypto.createHmac('sha256', process.env.AUTH_SIGNING_KEY).update(encoded).digest('base64url')}`
 const operatorId = '07IdLcVyn4q-s77Or8GldZwg_BsoQzSM'
-const input = () => ({ idempotencyKey: crypto.randomUUID(), ratings: ['Sales', 'Scale', 'Loading'].map(serviceType => ({ serviceType, score: 4 })) })
+const input = () => ({ idempotencyKey: crypto.randomUUID(), carPlate: 'aa-123-bb', ratings: ['Sales', 'Scale', 'Loading'].map(serviceType => ({ serviceType, score: 4 })) })
 async function request(path, method = 'GET', body = {}, headers = {}, query = {}) {
   const result = { headers: {} }
   await handler({ url: `/api/${path}`, method, body, headers: { host: 'factory.test', ...headers }, query }, {
@@ -95,6 +95,21 @@ test('overview operator filter keeps all service metrics and combines with plant
   const other = (await admin('admin/operators', 'POST', { displayName: 'Filter regression', plantId: selected.plantId })).body
   assert.equal((await admin('admin/dashboard', 'GET', {}, { operatorId: other.id })).body.total, 0)
   assert.equal((await admin('admin/dashboard', 'GET', {}, { operatorId: selected.id, plantId: crypto.randomUUID() })).body.total, 0)
+})
+
+test('administrators see the submitted car plate in responses and exports', async () => {
+  assert.equal((await configure('0')).status, 204)
+  assert.equal((await request(await qrPath(), 'POST', { ...input(), carPlate: 'tb-777zz' })).status, 200)
+  const rows = (await admin('admin/responses', 'GET', {}, {})).body.items
+  assert.ok(rows.some(row => row.carPlate === 'TB777ZZ'))
+  const exported = { headers: {} }
+  await handler({ url: '/api/admin/exports/csv', method: 'GET', body: {}, headers: { host: 'factory.test', authorization }, query: {} }, {
+    status(value) { exported.status = value; return this },
+    setHeader(name, value) { exported.headers[name] = value; return this },
+    end(value) { exported.body = value; return this },
+  })
+  assert.match(exported.body, /სახელმწიფო ნომერი/)
+  assert.match(exported.body, /"TB777ZZ"/)
 })
 
 test('admin can delete an operator with ratings without removing historical results', async () => {

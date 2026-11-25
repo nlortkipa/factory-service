@@ -8,7 +8,13 @@ public static class SeedData
 {
     public static async Task InitializeAsync(FactoryDbContext db)
     {
-        if (db.Database.IsSqlite()) await db.Database.EnsureCreatedAsync();
+        if (db.Database.IsSqlite())
+        {
+            await db.Database.EnsureCreatedAsync();
+            // EnsureCreated does not alter existing development databases.
+            int carPlateColumns = await db.Database.SqlQueryRaw<int>("SELECT COUNT(*) AS \"Value\" FROM pragma_table_info('SurveyResponses') WHERE name = 'CarPlate'").SingleAsync();
+            if (carPlateColumns == 0) await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"SurveyResponses\" ADD COLUMN \"CarPlate\" TEXT NOT NULL DEFAULT ''");
+        }
         else await db.Database.MigrateAsync();
 
         string? configuredAdminPhone = Environment.GetEnvironmentVariable("ADMIN_PHONE")?.Trim();

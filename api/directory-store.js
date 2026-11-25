@@ -46,6 +46,7 @@ async function initialize(sql) {
     CREATE INDEX IF NOT EXISTS factory_service_survey_responses_device_submitted_idx
     ON factory_service_survey_responses (device_token_hash, submitted_at DESC)
   `
+  await sql`ALTER TABLE factory_service_survey_responses ADD COLUMN IF NOT EXISTS car_plate text NOT NULL DEFAULT ''`
   await sql`
     CREATE TABLE IF NOT EXISTS factory_service_ratings (
       id uuid PRIMARY KEY,
@@ -281,9 +282,9 @@ class DirectoryStore {
     await this.ready
     const rows = await this.sql`
       INSERT INTO factory_service_survey_responses
-        (id, session_id, device_token_hash, submitted_at, plant_id, operator_id, idempotency_key)
+        (id, session_id, device_token_hash, submitted_at, plant_id, operator_id, idempotency_key, car_plate)
       SELECT ${entity.id}, ${entity.sessionId}, ${entity.deviceTokenHash}, ${entity.submittedAt},
-             ${entity.plantId}, ${entity.operatorId}, ${entity.idempotencyKey}
+             ${entity.plantId}, ${entity.operatorId}, ${entity.idempotencyKey}, ${entity.carPlate}
       WHERE NOT EXISTS (
         SELECT 1 FROM factory_service_survey_responses
         WHERE device_token_hash = ${entity.deviceTokenHash} AND submitted_at > ${cutoff}
@@ -307,6 +308,7 @@ class DirectoryStore {
     await this.ready
     return this.sql`
       SELECT r.id::text AS id, sr.id::text AS "responseId", sr.submitted_at AS "submittedAt",
+             sr.car_plate AS "carPlate",
              sr.plant_id::text AS "plantId", p.name AS plant,
              sr.operator_id::text AS "operatorId", o.display_name AS operator,
              r.service_type AS "serviceType", r.score, r.comment

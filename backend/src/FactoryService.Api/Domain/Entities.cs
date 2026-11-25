@@ -67,6 +67,7 @@ public sealed class SurveyResponse
     public Guid OperatorId { get; set; }
     public FactoryOperator? Operator { get; set; }
     [MaxLength(100)] public required string IdempotencyKey { get; set; }
+    [MaxLength(20)] public string CarPlate { get; set; } = "";
     public bool IsTest { get; set; }
     [MaxLength(500)] public string RiskFlags { get; set; } = "";
     public ICollection<Rating> Ratings { get; set; } = [];

@@ -55,7 +55,7 @@ test('short links open with names, submit all scores, and prevent duplicate sess
   assert.equal(opened.status, 200)
   assert.equal(opened.body.operatorName, qr.body.operatorName)
   assert.equal(opened.body.plant, qr.body.plantName)
-  const input = { idempotencyKey: crypto.randomUUID(), ratings: ['Sales', 'Scale', 'Loading'].map(serviceType => ({ serviceType, score: 5 })) }
+  const input = { idempotencyKey: crypto.randomUUID(), carPlate: 'aa-123-bb', ratings: ['Sales', 'Scale', 'Loading'].map(serviceType => ({ serviceType, score: 5 })) }
   assert.equal((await request(path, 'POST', input)).status, 200)
   assert.equal((await request(path, 'POST', input)).body.duplicate, true)
   assert.equal((await request(path, 'POST', { ...input, idempotencyKey: crypto.randomUUID() })).status, 409)
@@ -69,7 +69,7 @@ test('polling keeps unused QR stable and replaces it after a successful rating',
   assert.equal((await poll()).body.token, first.body.token, 'Scanning alone must not rotate the code')
   assert.equal((await request(`survey/${first.body.token}`, 'POST', { ratings: [] })).status, 400)
   assert.equal((await poll()).body.token, first.body.token, 'Rejected submissions must not rotate the code')
-  const input = { idempotencyKey: crypto.randomUUID(), ratings: ['Sales', 'Scale', 'Loading'].map(serviceType => ({ serviceType, score: 5 })) }
+  const input = { idempotencyKey: crypto.randomUUID(), carPlate: 'aa-123-bb', ratings: ['Sales', 'Scale', 'Loading'].map(serviceType => ({ serviceType, score: 5 })) }
   assert.equal((await request(`survey/${first.body.token}`, 'POST', input)).status, 200)
   const next = await poll()
   assert.equal(next.status, 200)
@@ -98,7 +98,7 @@ test('expired, invalid and mismatched current tokens are replaced', async () => 
 test('scan expiry and submission expiry are still separate', async () => {
   const token = createQrToken({ ...validPayload(), issuedAt: Date.now() - 301_000 }, key)
   assert.equal((await request(`survey/${token}`)).body.code, 'QR_EXPIRED')
-  const input = { idempotencyKey: crypto.randomUUID(), ratings: ['Sales', 'Scale', 'Loading'].map(serviceType => ({ serviceType, score: 4 })) }
+  const input = { idempotencyKey: crypto.randomUUID(), carPlate: 'aa-123-bb', ratings: ['Sales', 'Scale', 'Loading'].map(serviceType => ({ serviceType, score: 4 })) }
   assert.equal((await request(`survey/${token}`, 'POST', input)).status, 200)
   const expired = createQrToken({ ...validPayload(), issuedAt: Date.now() - 21 * 60_000 }, key)
   assert.equal((await request(`survey/${expired}`, 'POST', input)).body.code, 'SURVEY_EXPIRED')
@@ -111,4 +111,21 @@ test('already-issued signed JSON links continue to open', async () => {
   const opened = await request(`survey/${token}`)
   assert.equal(opened.status, 200)
   assert.equal(opened.body.plant, payload.plantName)
+})
+
+test('car plate is required and normalized before ratings are saved', async () => {
+  const { normalizeCarPlate } = await import('./index.js')
+  for (const entered of ['aa123aa', 'AA123AA', 'AA-123-AA', 'aa-123aa', 'AA123-AA', ' Aa-123-aA ']) assert.equal(normalizeCarPlate(entered), 'AA123AA')
+  for (const invalid of [undefined, '', 'AA 123 AA', 'AA--123AA', 'AA.123.AA', 'A123AA', 'AAA123AA', 'AA12AA', 'AA1234AA', 'AA123A', '12ABC34', 'ააა123აა', 'АА123АА', 'AA–123–AA']) assert.equal(normalizeCarPlate(invalid), null)
+
+  const qr = await request('agent/qr', 'POST', { operatorId })
+  const path = `survey/${qr.body.token}`
+  const ratings = ['Sales', 'Scale', 'Loading'].map(serviceType => ({ serviceType, score: 3 }))
+  for (const carPlate of [undefined, '', '<b>', 'AB 123 CD', 'AB1234CD']) {
+    const rejected = await request(path, 'POST', { idempotencyKey: crypto.randomUUID(), carPlate, ratings })
+    assert.equal(rejected.status, 400)
+    assert.equal(rejected.body.code, 'CAR_PLATE_INVALID')
+  }
+  const created = await request(path, 'POST', { idempotencyKey: crypto.randomUUID(), carPlate: 'tb-777-zz', ratings })
+  assert.equal(created.status, 200)
 })

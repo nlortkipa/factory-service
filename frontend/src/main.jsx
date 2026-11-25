@@ -54,6 +54,7 @@ const iconPaths = {
   logout: <><path d="M14 4.5H6.5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2H14"/><path d="M10 12h10M16.5 8.5 20 12l-3.5 3.5"/></>,
   sidebar: <><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M9.5 4.5v15M5.8 8h1.6M5.8 10.5h1.6"/></>,
   close: <path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>,
+  car: <><path d="M5 16.5V12l1.8-4.6A2 2 0 0 1 8.66 6h6.68a2 2 0 0 1 1.86 1.4L19 12v4.5"/><path d="M3.5 16.5h17M5 12h14"/><circle cx="8" cy="16.5" r="1.8"/><circle cx="16" cy="16.5" r="1.8"/></>,
   check: <path d="m5 12.5 4.5 4.5L19 7.5"/>,
   filter: <path d="M4 7h16M7 12h10M10 17h4"/>,
   chevron: <path d="m9 6 6 6-6 6"/>,
@@ -232,14 +233,44 @@ function Landing() {
 
 /* ───────────────────────── Survey (public, mobile-first) ───────────────────────── */
 
+const carPlateSteps = ['Plate', 'Sales', 'Scale', 'Loading']
+// Accepts AA123AA or AA-123-AA (any case); always sent as AA123AA.
+function normalizeCarPlate(value) { const match = /^([A-Z]{2})-?(\d{3})-?([A-Z]{2})$/.exec(String(value || '').trim().toUpperCase()); return match ? match.slice(1).join('') : null }
+function isValidCarPlate(value) { return normalizeCarPlate(value) !== null }
+// Live formatting for the plate field: AA-123-AA. Each position only accepts its own
+// character type, and the hyphen appears as soon as a group is complete. While deleting,
+// a trailing hyphen is only kept if the user left it there, so backspace never gets stuck.
+function formatCarPlateInput(value, deleting) {
+  const chars = []
+  for (const char of String(value || '').toUpperCase()) {
+    const position = chars.length
+    if (position >= 7) break
+    if ((position < 2 || position >= 5 ? /[A-Z]/ : /[0-9]/).test(char)) chars.push(char)
+  }
+  const keepDash = count => chars.length > count || (chars.length === count && (!deleting || value.endsWith('-')))
+  return chars.slice(0, 2).join('') + (keepDash(2) ? '-' : '') + chars.slice(2, 5).join('') + (keepDash(5) ? '-' : '') + chars.slice(5).join('')
+}
+
+function GeorgianFlag() {
+  const cross = (x, y) => <path d={`M${x - 0.9} ${y - 2.2}h1.8v1.3h1.3v1.8h-1.3v1.3h-1.8v-1.3h-1.3v-1.8h1.3z`}/>
+  return <svg className="plate-flag" viewBox="0 0 30 20" aria-hidden="true">
+    <rect width="30" height="20" fill="#fff"/>
+    <g fill="#e8112d"><rect x="12.5" width="5" height="20"/><rect y="7.5" width="30" height="5"/>{cross(6.25, 3.75)}{cross(23.75, 3.75)}{cross(6.25, 16.25)}{cross(23.75, 16.25)}</g>
+    <rect x="0.25" y="0.25" width="29.5" height="19.5" fill="none" stroke="rgba(0,0,0,.25)" strokeWidth="0.5"/>
+  </svg>
+}
+
 function SurveyPage({ token }) {
   const [session, setSession] = useState(null)
   const [step, setStep] = useState(0)
   const [direction, setDirection] = useState('forward')
+  const [carPlate, setCarPlate] = useState('')
   const [ratings, setRatings] = useState({ Sales: {}, Scale: {}, Loading: {} })
   const [state, setState] = useState({ loading: true, error: '', submitting: false, done: null })
   const types = ['Sales', 'Scale', 'Loading']
-  const type = types[step]
+  const type = carPlateSteps[step]
+  const isPlateStep = type === 'Plate'
+  const lastStep = carPlateSteps.length - 1
   useEffect(() => {
     api(`/api/survey/${encodeURIComponent(token)}`).then(data => { setSession(data); setState(s => ({ ...s, loading: false })) })
       .catch(error => setState(s => ({ ...s, loading: false, error: error.message })))
@@ -248,21 +279,25 @@ function SurveyPage({ token }) {
   const choose = score => { setRatings(value => ({ ...value, [type]: { ...value[type], score } })); setState(s => s.error ? { ...s, error: '' } : s) }
   const comment = value => setRatings(current => ({ ...current, [type]: { ...current[type], comment: value } }))
   const back = () => { setDirection('back'); setState(s => ({ ...s, error: '' })); setStep(step - 1) }
+  const changePlate = value => { setCarPlate(current => formatCarPlateInput(value, value.length < current.length)); setState(s => s.error ? { ...s, error: '' } : s) }
   const advance = async () => {
-    if (!ratings[type].score) return setState(s => ({ ...s, error: 'გთხოვთ აირჩიოთ შეფასება.' }))
+    if (isPlateStep) {
+      if (!isValidCarPlate(carPlate)) return setState(s => ({ ...s, error: 'ნომერი უნდა იყოს ფორმატით AA123AA ან AA-123-AA.' }))
+      setCarPlate(normalizeCarPlate(carPlate))
+    } else if (!ratings[type].score) return setState(s => ({ ...s, error: 'გთხოვთ აირჩიოთ შეფასება.' }))
     setState(s => ({ ...s, error: '' }))
-    if (step < 2) { setDirection('forward'); return setStep(step + 1) }
+    if (step < lastStep) { setDirection('forward'); return setStep(step + 1) }
     setState(s => ({ ...s, submitting: true }))
     try {
       const data = await api(`/api/survey/${encodeURIComponent(token)}`, {
-        method: 'POST', body: JSON.stringify({ idempotencyKey: createIdempotencyKey(), ratings: types.map(serviceType => ({ serviceType, score: ratings[serviceType].score, comment: ratings[serviceType].comment || '' })) })
+        method: 'POST', body: JSON.stringify({ idempotencyKey: createIdempotencyKey(), carPlate: normalizeCarPlate(carPlate), ratings: types.map(serviceType => ({ serviceType, score: ratings[serviceType].score, comment: ratings[serviceType].comment || '' })) })
       })
       setState(s => ({ ...s, submitting: false, done: data }))
     } catch (error) { setState(s => ({ ...s, submitting: false, error: error.message })) }
   }
 
   useEffect(() => {
-    if (!session || session.blocked || state.done) return
+    if (!session || session.blocked || state.done || isPlateStep) return
     const onKey = event => {
       if (isTypingTarget(event.target) || event.metaKey || event.ctrlKey || event.altKey) return
       if (/^[1-5]$/.test(event.key)) { event.preventDefault(); choose(Number(event.key)) }
@@ -276,8 +311,8 @@ function SurveyPage({ token }) {
   if (session?.blocked) return <StatusScreen tone="blocked" title="შეფასება უკვე დაფიქსირებულია" detail={`შემდეგი შეფასება შესაძლებელი იქნება ${formatDate(session.nextAllowedAt)}.`} />
   if (state.done) return <StatusScreen tone="success" title="გმადლობთ შეფასებისთვის!" detail={`თქვენი პასუხი დაცულად შეინახა. შემდეგი შეფასება: ${formatDate(state.done.nextAllowedAt)}.`} />
 
-  const selected = ratings[type].score
-  const commentLength = (ratings[type].comment || '').length
+  const selected = ratings[type]?.score
+  const commentLength = (ratings[type]?.comment || '').length
   return <main className="survey-shell">
     <header className="survey-top">
       <div className="survey-brand"><AppMark size="sm"/><span>{appName}</span></div>
@@ -287,12 +322,23 @@ function SurveyPage({ token }) {
         <span className="survey-context-icon"><Icon name="plants" size={18}/></span>
         <div><b>{session.plant}</b><span>{session.operatorName}</span></div>
       </div>
-      <ol className="survey-steps" aria-label={`ნაბიჯი ${step + 1} 3-დან`}>
-        {types.map((item, index) => <li key={item} className={index < step ? 'done' : index === step ? 'current' : ''} aria-current={index === step ? 'step' : undefined}>
-          <i>{index < step ? <Icon name="check" size={11} strokeWidth={2.6}/> : index + 1}</i><span>{serviceCopy[item].short}</span>
+      <ol className="survey-steps" aria-label={`ნაბიჯი ${step + 1} ${carPlateSteps.length}-დან`}>
+        {carPlateSteps.map((item, index) => <li key={item} className={index < step ? 'done' : index === step ? 'current' : ''} aria-current={index === step ? 'step' : undefined}>
+          <i>{index < step ? <Icon name="check" size={11} strokeWidth={2.6}/> : index + 1}</i><span>{item === 'Plate' ? 'ნომერი' : serviceCopy[item].short}</span>
         </li>)}
       </ol>
-      <form className={`survey-body ${direction}`} key={type} onSubmit={event => { event.preventDefault(); advance() }}>
+      <form className={`survey-body ${direction}`} key={type} onSubmit={event => { event.preventDefault(); advance() }} noValidate>
+        {isPlateStep ? <>
+          <h1>ავტომობილის სახელმწიფო ნომერი</h1>
+          <p className="survey-hint">შეფასებამდე მიუთითეთ ავტომობილის ნომერი.</p>
+          <label className={`plate-field ${state.error ? 'invalid' : ''}`}>
+            <span className="sr-only">სახელმწიფო ნომერი</span>
+            <span className="plate-country" aria-hidden="true"><GeorgianFlag/><b>GE</b></span>
+            <input type="text" value={carPlate} onChange={event => changePlate(event.target.value)} placeholder="AA-123-AA" maxLength="9"
+              autoFocus autoComplete="off" autoCorrect="off" autoCapitalize="characters" spellCheck="false" enterKeyHint="next"
+              aria-invalid={Boolean(state.error) || undefined} required />
+          </label>
+        </> : <>
         <h1>{serviceCopy[type].title}</h1>
         <div className="score-row" role="radiogroup" aria-label="ქულა">
           {[1, 2, 3, 4, 5].map(score => <button type="button" key={score} role="radio" data-score={score} className={`score ${selected === score ? 'selected' : ''}`} onClick={() => choose(score)} aria-label={`${score} — ${scoreLabels[score - 1]}`} aria-checked={selected === score}>
@@ -305,11 +351,12 @@ function SurveyPage({ token }) {
           <textarea maxLength="1000" rows="3" value={ratings[type].comment || ''} onChange={event => comment(event.target.value)} placeholder="კომენტარი (არასავალდებულო)" />
           {commentLength > 0 && <small>{commentLength} / 1000</small>}
         </label>
+        </>}
         {state.error && <p className="form-error" role="alert"><Icon name="alert" size={14}/>{state.error}</p>}
         <div className="survey-actions">
           {step > 0 && <button type="button" className="button large" onClick={back}><Icon name="arrowLeft" size={16}/>უკან</button>}
           <button className="button primary large grow" disabled={state.submitting}>
-            {state.submitting ? <><Spinner/>იგზავნება…</> : step === 2 ? 'შეფასების გაგზავნა' : <>გაგრძელება<Icon name="arrowRight" size={16}/></>}
+            {state.submitting ? <><Spinner/>იგზავნება…</> : step === lastStep ? 'შეფასების გაგზავნა' : <>გაგრძელება<Icon name="arrowRight" size={16}/></>}
           </button>
         </div>
       </form>
@@ -945,11 +992,11 @@ function Responses({ canDelete }) {
     finally { setState(current => ({ ...current, deleting: '' })) }
   }
   const activeCount = ['plantId', 'operatorId', 'score'].filter(key => filters[key]).length
-  const columns = ['თარიღი', 'ქარხანა', 'ოპერატორი', serviceCopy.Loading.short, serviceCopy.Sales.short, serviceCopy.Scale.short, ...(canDelete ? [''] : [])]
+  const columns = ['თარიღი', 'ავტ. ნომერი', 'ქარხანა', 'ოპერატორი', serviceCopy.Loading.short, serviceCopy.Sales.short, serviceCopy.Scale.short, ...(canDelete ? [''] : [])]
   const rows = (data?.items || []).map(item => ({
     key: item.id,
     cells: [
-      <span className="cell-date">{formatDateTime(item.submittedAt)}</span>, item.plant, item.operator,
+      <span className="cell-date">{formatDateTime(item.submittedAt)}</span>, <PlateValue value={item.carPlate}/>, item.plant, item.operator,
       <ScoreValue score={item.loadingScore} comment={item.loadingComment} serviceLabel={serviceCopy.Loading.title} response={item}/>,
       <ScoreValue score={item.salesScore} comment={item.salesComment} serviceLabel={serviceCopy.Sales.title} response={item}/>,
       <ScoreValue score={item.scaleScore} comment={item.scaleComment} serviceLabel={serviceCopy.Scale.title} response={item}/>,
@@ -975,6 +1022,10 @@ function Responses({ canDelete }) {
   </div>
 }
 
+function PlateValue({ value }) {
+  return value ? <span className="plate-chip">{value}</span> : <span className="muted">—</span>
+}
+
 function ScoreValue({ score, comment, serviceLabel, response }) {
   const popoverId = useId()
   return <div className="score-with-comment">
@@ -991,6 +1042,7 @@ function ScoreValue({ score, comment, serviceLabel, response }) {
         </header>
         <blockquote>{comment}</blockquote>
         <dl className="comment-details">
+          <div><dt>ავტ. ნომერი</dt><dd>{response.carPlate || '—'}</dd></div>
           <div><dt>ქარხანა</dt><dd>{response.plant}</dd></div>
           <div><dt>ოპერატორი</dt><dd>{response.operator}</dd></div>
           <div><dt>თარიღი და დრო</dt><dd>{formatDateTime(response.submittedAt)}</dd></div>

@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using FactoryService.Api.Contracts;
@@ -193,6 +194,9 @@ public static class FactoryServiceEndpoints
             if (request.Ratings.Count != 3 || request.Ratings.Select(x => x.ServiceType).Distinct().Count() != 3 ||
                 request.Ratings.Any(x => x.Score is < 1 or > 5 || (x.Comment?.Length ?? 0) > 1000))
                 return Results.ValidationProblem(new Dictionary<string, string[]> { ["ratings"] = ["სამივე შეფასება, 1-დან 5 ქულამდე, სავალდებულოა."] });
+            string? carPlate = NormalizeCarPlate(request.CarPlate);
+            if (carPlate is null)
+                return Results.BadRequest(new { code = "CAR_PLATE_INVALID", message = "ნომერი უნდა იყოს ფორმატით AA123AA ან AA-123-AA." });
 
             int repeatWindowDays = await RepeatWindowDaysAsync(db, options.Value);
             SurveyResponse? duplicate = await db.SurveyResponses.SingleOrDefaultAsync(x => x.IdempotencyKey == request.IdempotencyKey);
@@ -222,7 +226,7 @@ public static class FactoryServiceEndpoints
             {
                 QrSessionId = session.Id, RespondentDevice = device, SubmittedAt = now, PlantId = session.PlantId,
                 OperatorId = session.OperatorId,
-                IdempotencyKey = request.IdempotencyKey, IsTest = session.IsTest
+                IdempotencyKey = request.IdempotencyKey, CarPlate = carPlate, IsTest = session.IsTest
             };
             foreach (RatingInput rating in request.Ratings)
             {
@@ -368,6 +372,7 @@ public static class FactoryServiceEndpoints
         {
             x.Id,
             x.SubmittedAt,
+            x.CarPlate,
             Plant = x.Plant!.Name,
             Operator = x.Operator!.DisplayName,
             LoadingScore = RatingScore(x, ServiceType.Loading),
@@ -388,6 +393,7 @@ public static class FactoryServiceEndpoints
             .OrderByDescending(x => x.SubmittedAt).ToListAsync();
         var rows = responses.Select(x => new ReportRow(
             x.SubmittedAt,
+            x.CarPlate,
             x.Plant!.Name,
             x.Operator!.DisplayName,
             RatingScore(x, ServiceType.Loading),
@@ -452,6 +458,13 @@ public static class FactoryServiceEndpoints
         string token = SecureHash.RandomToken();
         context.Response.Cookies.Append(name, token, new CookieOptions { HttpOnly = true, Secure = secure, SameSite = SameSiteMode.Lax, IsEssential = true, MaxAge = TimeSpan.FromDays(400), Path = "/" });
         return token;
+    }
+
+    private static string? NormalizeCarPlate(string? value)
+    {
+        // Accepts AA123AA or AA-123-AA (any case) and stores it as AA123AA.
+        Match match = Regex.Match((value ?? "").Trim().ToUpperInvariant(), @"^([A-Z]{2})-?([0-9]{3})-?([A-Z]{2})$");
+        return match.Success ? match.Groups[1].Value + match.Groups[2].Value + match.Groups[3].Value : null;
     }
 
     private static string CleanComment(string? value) => Regex.Replace(value?.Trim() ?? "", "<[^>]+>", "").Replace("javascript:", "", StringComparison.OrdinalIgnoreCase);

@@ -5,16 +5,16 @@ using FactoryService.Api.Domain;
 
 namespace FactoryService.Api.Services;
 
-public sealed record ReportRow(DateTimeOffset SubmittedAt, string Plant, string Operator, int LoadingScore, int SalesScore, int ScaleScore, string Comment);
+public sealed record ReportRow(DateTimeOffset SubmittedAt, string CarPlate, string Plant, string Operator, int LoadingScore, int SalesScore, int ScaleScore, string Comment);
 
 public static class ReportExportService
 {
     public static byte[] Csv(IReadOnlyList<ReportRow> rows)
     {
-        var sb = new StringBuilder("თარიღი,ქარხანა,ოპერატორი,დატვირთვის მომსახურება,გაყიდვების ოპერატორი,სასწორის მომსასხურება,კომენტარი\r\n");
+        var sb = new StringBuilder("თარიღი,სახელმწიფო ნომერი,ქარხანა,ოპერატორი,დატვირთვის მომსახურება,გაყიდვების ოპერატორი,სასწორის მომსასხურება,კომენტარი\r\n");
         foreach (ReportRow row in rows)
         {
-            sb.Append(CsvCell(row.SubmittedAt.ToString("O"))).Append(',').Append(CsvCell(row.Plant)).Append(',')
+            sb.Append(CsvCell(row.SubmittedAt.ToString("O"))).Append(',').Append(CsvCell(row.CarPlate)).Append(',').Append(CsvCell(row.Plant)).Append(',')
               .Append(CsvCell(row.Operator)).Append(',')
               .Append(row.LoadingScore).Append(',').Append(row.SalesScore).Append(',').Append(row.ScaleScore).Append(',')
               .Append(CsvCell(row.Comment)).Append("\r\n");
@@ -26,15 +26,15 @@ public static class ReportExportService
     {
         using var workbook = new XLWorkbook();
         IXLWorksheet sheet = workbook.AddWorksheet("Ratings");
-        string[] headers = ["თარიღი", "ქარხანა", "ოპერატორი", "დატვირთვის მომსახურება", "გაყიდვების ოპერატორი", "სასწორის მომსასხურება", "კომენტარი"];
+        string[] headers = ["თარიღი", "სახელმწიფო ნომერი", "ქარხანა", "ოპერატორი", "დატვირთვის მომსახურება", "გაყიდვების ოპერატორი", "სასწორის მომსასხურება", "კომენტარი"];
         for (int i = 0; i < headers.Length; i++) sheet.Cell(1, i + 1).Value = headers[i];
         for (int i = 0; i < rows.Count; i++)
         {
             ReportRow row = rows[i]; int r = i + 2;
-            sheet.Cell(r, 1).Value = row.SubmittedAt.LocalDateTime;
-            sheet.Cell(r, 2).Value = row.Plant; sheet.Cell(r, 3).Value = row.Operator;
-            sheet.Cell(r, 4).Value = row.LoadingScore; sheet.Cell(r, 5).Value = row.SalesScore;
-            sheet.Cell(r, 6).Value = row.ScaleScore; sheet.Cell(r, 7).Value = row.Comment;
+            sheet.Cell(r, 1).Value = row.SubmittedAt.LocalDateTime; sheet.Cell(r, 2).Value = row.CarPlate;
+            sheet.Cell(r, 3).Value = row.Plant; sheet.Cell(r, 4).Value = row.Operator;
+            sheet.Cell(r, 5).Value = row.LoadingScore; sheet.Cell(r, 6).Value = row.SalesScore;
+            sheet.Cell(r, 7).Value = row.ScaleScore; sheet.Cell(r, 8).Value = row.Comment;
         }
         sheet.Row(1).Style.Fill.BackgroundColor = XLColor.FromHtml("#193551");
         sheet.Row(1).Style.Font.FontColor = XLColor.White; sheet.Row(1).Style.Font.Bold = true;
@@ -47,8 +47,8 @@ public static class ReportExportService
         // Lightweight standards-compliant PDF for dependency-free server exports. The portal UI remains fully Georgian;
         // this tabular export uses ASCII labels so it renders with the PDF core Helvetica font everywhere.
         var lines = new List<string> { "KARTULI CEMENT - SERVICE EVALUATION REPORT", $"Generated: {DateTimeOffset.Now:yyyy-MM-dd HH:mm}", "" };
-        lines.Add("DATE       | PLANT              | OPERATOR           | LOAD | SALES | SCALE");
-        lines.AddRange(rows.Take(45).Select(x => $"{x.SubmittedAt:yyyy-MM-dd} | {Ascii(x.Plant),-18} | {Ascii(x.Operator),-18} | {x.LoadingScore,4} | {x.SalesScore,5} | {x.ScaleScore,5}"));
+        lines.Add("DATE       | CAR PLATE  | PLANT              | OPERATOR           | LOAD | SALES | SCALE");
+        lines.AddRange(rows.Take(45).Select(x => $"{x.SubmittedAt:yyyy-MM-dd} | {Ascii(x.CarPlate),-10} | {Ascii(x.Plant),-18} | {Ascii(x.Operator),-18} | {x.LoadingScore,4} | {x.SalesScore,5} | {x.ScaleScore,5}"));
         if (rows.Count > 46) lines.Add($"... {rows.Count - 46} more rows. Use XLSX or CSV for the complete dataset.");
         string content = "BT /F1 10 Tf 46 795 Td 14 TL " + string.Join(" Tj T* ", lines.Select(x => $"({Escape(x)})")) + " Tj ET";
         var objects = new[]
