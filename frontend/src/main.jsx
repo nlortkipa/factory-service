@@ -1225,9 +1225,10 @@ function Empty({ icon = 'search', title, detail, action }) { return <div classNa
 /* ───────────────────────── Helpers ───────────────────────── */
 
 function scoreBucket(value) { const numeric = Number(value); return Number.isFinite(numeric) && numeric > 0 ? Math.max(1, Math.min(5, Math.round(numeric))) : undefined }
-function formatDate(value) { return new Intl.DateTimeFormat('ka-GE', { dateStyle: 'long' }).format(new Date(value)) }
-function formatAxisDate(value) { return new Intl.DateTimeFormat('ka-GE', { day: '2-digit', month: '2-digit' }).format(new Date(value)) }
-function formatDateTime(value) { return new Intl.DateTimeFormat('ka-GE', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) }
+function pad2(value) { return String(value).padStart(2, '0') }
+function formatDate(value) { const date = new Date(value); return `${date.getDate()} ${monthNames[date.getMonth()]}, ${date.getFullYear()}` }
+function formatAxisDate(value) { const date = new Date(value); return `${pad2(date.getDate())}.${pad2(date.getMonth() + 1)}` }
+function formatDateTime(value) { const date = new Date(value); return `${date.getDate()} ${monthNames[date.getMonth()].slice(0, 3)}. ${date.getFullYear()}, ${pad2(date.getHours())}:${pad2(date.getMinutes())}` }
 function formatNumber(value) { return new Intl.NumberFormat('ka-GE').format(value) }
 function isoDate(offset) { const date = new Date(); date.setDate(date.getDate() + offset); return date.toISOString().slice(0, 10) }
 function responseFilterDefaults() { return { from: isoDate(-30), to: isoDate(0), plantId: '', operatorId: '', score: '' } }
