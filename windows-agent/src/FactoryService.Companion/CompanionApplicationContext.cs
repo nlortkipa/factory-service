@@ -68,7 +68,7 @@ internal sealed class CompanionApplicationContext : ApplicationContext
                 Text = "ქართული ცემენტი — შეფასება",
                 Icon = _icon,
                 AutoScaleMode = AutoScaleMode.Dpi,
-                ClientSize = new Size(360, 135),
+                ClientSize = new Size(360, 181),
                 FormBorderStyle = FormBorderStyle.FixedDialog,
                 MaximizeBox = false,
                 StartPosition = FormStartPosition.CenterScreen,
@@ -77,11 +77,53 @@ internal sealed class CompanionApplicationContext : ApplicationContext
             var refresh = new Button
             {
                 Text = "Turmo QR კოდის განახლება",
-                Location = new Point(24, 45),
+                Location = new Point(24, 23),
                 Size = new Size(312, 45),
             };
             refresh.Click += async (_, _) => await _refresh.TickAsync(force: true);
-            _window.Controls.Add(refresh);
+            var disable = new Button
+            {
+                Text = "QR კოდების გამორთვა",
+                Location = new Point(24, 79),
+                Size = new Size(312, 45),
+            };
+            var status = new Label
+            {
+                Location = new Point(24, 135),
+                Size = new Size(312, 30),
+                AccessibleRole = AccessibleRole.StatusBar,
+            };
+            void UpdateControls()
+            {
+                try
+                {
+                    bool configured = !string.IsNullOrWhiteSpace(_loadConfiguration().OperatorId);
+                    disable.Enabled = refresh.Enabled = configured;
+                    status.Text = configured ? "" : "QR კოდები გამორთულია ამ მომხმარებლისთვის.";
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+                {
+                    disable.Enabled = refresh.Enabled = true;
+                    status.Text = "კონფიგურაცია ვერ ჩაიტვირთა.";
+                }
+            }
+            disable.Click += async (_, _) =>
+            {
+                if (MessageBox.Show(_window,
+                    "ამ Windows მომხმარებლის ოპერატორის კონფიგურაცია წაიშლება. QR კოდების ჩასართავად ხელახლა მიანიჭეთ ოპერატორი.",
+                    "QR კოდების გამორთვა", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
+                try { AgentConfigStore.RemoveUserConfiguration(); }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                {
+                    MessageBox.Show(_window, exception.Message, "კონფიგურაცია ვერ წაიშალა", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return;
+                }
+                UpdateControls();
+                await _refresh.TickAsync(force: true);
+            };
+            _window.Controls.AddRange([refresh, disable, status]);
+            _window.Activated += (_, _) => UpdateControls();
+            UpdateControls();
             _window.FormClosed += (_, _) => _window = null;
             _window.Show();
         }

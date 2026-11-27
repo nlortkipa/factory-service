@@ -81,6 +81,11 @@ after locking and unlocking Windows (`Win+L`). A new Windows login also starts
 the companion with the latest configuration; restarting the whole PC is not
 required.
 
+Open the client and select **QR კოდების გამორთვა** to remove the operator
+assignment for the current Windows user. The shared client and other users'
+assignments stay in place. Run an operator-specific installer to assign an
+operator again.
+
 Configuration read errors clear the QR; the companion never falls back to a
 previously loaded operator. Requests in progress are cancelled when session
 ownership changes, and responses for a configuration that has changed are discarded.

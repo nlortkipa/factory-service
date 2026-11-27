@@ -40,6 +40,11 @@ public static class AgentConfigStore
     // launches keep the existing environment overrides for the local dev launcher.
     public static AgentConfig LoadUserConfiguration() => Load(UserConfigPath, applyOverrides: false);
     public static AgentConfig EnsureUserConfiguration() => Ensure(UserConfigPath, applyOverrides: false);
+    public static void RemoveUserConfiguration()
+    {
+        try { File.Delete(UserConfigPath); }
+        catch (DirectoryNotFoundException) { }
+    }
 
     public static AgentConfig LoadOrDefault()
     {

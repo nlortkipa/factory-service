@@ -232,6 +232,43 @@ var tests = new (string Name, Func<Task> Run)[]
         await refresh;
         Check(rig.Screen == "unavailable", "Old config response published");
     }),
+    ("Removing the current user's assignment stops QR generation until reassigned", async () =>
+    {
+        var rig = new Rig();
+        string operatorId = "Administrator";
+        var pending = new TaskCompletionSource<AgentQrResponse>();
+        CancellationToken inFlight = default;
+        using var admin = rig.Controller("Administrator", () => new AgentConfig { OperatorId = operatorId }, (config, token) =>
+        {
+            rig.Requests.Add(config.OperatorId);
+            if (rig.Requests.Count != 2) return Task.FromResult(Rig.Response(config.OperatorId));
+            inFlight = token;
+            return pending.Task;
+        });
+        using var test = rig.Controller("Test");
+        await admin.TickAsync();
+        Check(rig.Screen == "Administrator", "Initial QR missing");
+        Task refresh = admin.TickAsync(force: true);
+        operatorId = "";
+        await admin.TickAsync(force: true);
+        Check(inFlight.IsCancellationRequested, "Removing the assignment kept a request active");
+        pending.SetResult(Rig.Response("stale"));
+        await refresh;
+        await admin.TickAsync();
+        await admin.TickAsync(force: true);
+        Check(rig.Screen == "unavailable" && rig.Requests.SequenceEqual(["Administrator", "Administrator"]),
+            "An unassigned user requested or displayed a QR code");
+
+        rig.ActiveUser = "Test";
+        await test.TickAsync();
+        await admin.TickAsync(force: true);
+        Check(rig.Screen == "Test", "Removing an assignment affected the other user's QR");
+
+        operatorId = "Reassigned";
+        rig.ActiveUser = "Administrator";
+        await admin.TickAsync();
+        Check(rig.Screen == "Reassigned", "QR generation did not resume after reassignment");
+    }),
     ("Ownership is checked again after waiting for the panel", async () =>
     {
         var rig = new Rig();

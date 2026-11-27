@@ -61,7 +61,17 @@ internal sealed class QrRefreshController(
             }
 
             if (!session.CanPublish) throw new OperationCanceledException();
-            AgentConfig config = LoadConfiguredOperator(loadConfiguration);
+            AgentConfig config = loadConfiguration();
+            if (string.IsNullOrWhiteSpace(config.OperatorId))
+            {
+                if (_displayed is not null)
+                    await panel.ShowUnavailableAsync("შეფასება დროებით მიუწვდომელია", () => session.CanClear, token);
+                token.ThrowIfCancellationRequested();
+                _displayed = null;
+                _displayedConfig = null;
+                _nextRefresh = Now.AddSeconds(5);
+                return;
+            }
             string? currentToken = config == _displayedConfig && _displayed?.ExpiresAt > Now ? _displayed.Token : null;
             AgentQrResponse response = await requestQr(config, currentToken, token);
             token.ThrowIfCancellationRequested();
@@ -102,14 +112,6 @@ internal sealed class QrRefreshController(
             _request = null;
             _running = false;
         }
-    }
-
-    internal static AgentConfig LoadConfiguredOperator(Func<AgentConfig> load)
-    {
-        AgentConfig config = load();
-        if (string.IsNullOrWhiteSpace(config.OperatorId))
-            throw new AgentApiException("ამ Windows მომხმარებლისთვის ოპერატორი არ არის მითითებული", "operator_not_configured", null);
-        return config;
     }
 
     public async Task ClearAsync(CancellationToken cancellationToken = default)
