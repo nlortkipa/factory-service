@@ -7,7 +7,7 @@ namespace FactoryService.Setup;
 
 internal static class InstalledClient
 {
-    private const string ServiceName = "FactoryServiceAgent";
+    public const string ServiceName = "FactoryServiceAgent";
     public const string ServiceFileName = "FactoryService.Service.exe";
     public const string CompanionFileName = "FactoryService.Companion.exe";
     private static readonly TimeSpan StopTimeout = TimeSpan.FromSeconds(30);
@@ -17,13 +17,13 @@ internal static class InstalledClient
     public static string ServicePath => Path.Combine(InstallDirectory, ServiceFileName);
     public static string CompanionPath => Path.Combine(InstallDirectory, CompanionFileName);
     public static bool IsInstalled => File.Exists(ServicePath) && File.Exists(CompanionPath);
-    public static bool IsRunning
+    public static bool HasService => CurrentStatus() is not null;
+    public static bool IsRunning => CurrentStatus() == ServiceControllerStatus.Running;
+
+    private static ServiceControllerStatus? CurrentStatus()
     {
-        get
-        {
-            using var service = new ServiceController(ServiceName);
-            return GetStatus(service) == ServiceControllerStatus.Running;
-        }
+        using var service = new ServiceController(ServiceName);
+        return GetStatus(service);
     }
 
     public static void WithMachineLock(Action operation)
@@ -57,9 +57,10 @@ internal static class InstalledClient
         WaitForInstalledProcesses(CompanionPath, terminate: true);
     }
 
-    public static void WaitUntilRunning()
+    public static void Start()
     {
         using var service = new ServiceController(ServiceName);
+        service.Start();
         service.WaitForStatus(ServiceControllerStatus.Running, StopTimeout);
     }
 

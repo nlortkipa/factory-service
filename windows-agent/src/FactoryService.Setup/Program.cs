@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Net.Http.Json;
 using System.Security.Principal;
@@ -333,7 +334,7 @@ internal sealed class ProgressForm : Form
             update.Prepare(zip);
 
             bool wasRunning = InstalledClient.IsRunning;
-            bool hadService = Run("sc.exe", "query FactoryServiceAgent", true) == 0;
+            bool hadService = InstalledClient.HasService;
             bool serviceConfigurationStarted = false;
             try
             {
@@ -351,13 +352,10 @@ internal sealed class ProgressForm : Form
                 {
                     if (serviceConfigurationStarted) InstalledClient.Stop();
                     if (update.HasChanges) update.Restore();
-                    if (serviceConfigurationStarted && !hadService && Run("sc.exe", "query FactoryServiceAgent", true) == 0)
-                        Run("sc.exe", "delete FactoryServiceAgent");
+                    if (serviceConfigurationStarted && !hadService)
+                        ServiceRegistration.Remove();
                     if (wasRunning && !InstalledClient.IsRunning)
-                    {
-                        Run("sc.exe", "start FactoryServiceAgent");
-                        InstalledClient.WaitUntilRunning();
-                    }
+                        InstalledClient.Start();
                 }
                 catch (Exception recoveryError)
                 {
@@ -375,17 +373,11 @@ internal sealed class ProgressForm : Form
 
     private static void ConfigureAndStartService()
     {
-        string installedService = InstalledClient.ServicePath;
-        if (Run("sc.exe", "query FactoryServiceAgent", true) != 0)
-            Run("sc.exe", $"create FactoryServiceAgent binPath= \"\\\"{installedService}\\\"\" DisplayName= \"Factory Service Agent\" start= auto");
-        else Run("sc.exe", $"config FactoryServiceAgent binPath= \"\\\"{installedService}\\\"\" start= auto obj= LocalSystem");
-        Run("sc.exe", "description FactoryServiceAgent \"ავტომატურად უშვებს მომსახურების შეფასების კლიენტს.\"");
-        Run("sc.exe", "failure FactoryServiceAgent reset= 86400 actions= restart/5000/restart/15000/restart/30000");
-        Run("sc.exe", "start FactoryServiceAgent");
-        InstalledClient.WaitUntilRunning();
+        ServiceRegistration.Configure();
+        InstalledClient.Start();
         using (RegistryKey key = Registry.LocalMachine.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"))
             key.SetValue("FactoryServiceCompanion", $"\"{InstalledClient.CompanionPath}\" --background --installed");
-        Run("schtasks.exe", "/Change /TN \"TURMO_ScheduleTask\" /Disable", true);
+        SetLegacyTaskEnabled(false);
     }
 
     private void Uninstall()
@@ -393,21 +385,30 @@ internal sealed class ProgressForm : Form
         Invoke(() => _message.Text = "კლიენტი ჩერდება და იშლება…");
         using (RegistryKey? key = Registry.LocalMachine.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", true)) key?.DeleteValue("FactoryServiceCompanion", false);
         InstalledClient.Stop();
-        if (Run("sc.exe", "query FactoryServiceAgent", true) == 0)
-            Run("sc.exe", "delete FactoryServiceAgent");
-        Run("schtasks.exe", "/Change /TN \"TURMO_ScheduleTask\" /Enable", true);
+        ServiceRegistration.Remove();
+        SetLegacyTaskEnabled(true);
         Shortcuts.Remove();
         string install = InstalledClient.InstallDirectory;
         if (Directory.Exists(install))
             InstalledClient.RetrySharingViolation(() => Directory.Delete(install, true));
     }
 
-    private static int Run(string file, string arguments, bool allowFailure = false)
+    private static void SetLegacyTaskEnabled(bool enabled)
     {
-        using var process = Process.Start(new ProcessStartInfo(file, arguments) { UseShellExecute = false, CreateNoWindow = true }) ?? throw new InvalidOperationException($"{file} ვერ გაეშვა.");
-        process.WaitForExit();
-        if (!allowFailure && process.ExitCode != 0) throw new InvalidOperationException($"{file} შეცდომით დასრულდა (კოდი: {process.ExitCode}).");
-        return process.ExitCode;
+        // The official Turmo task may not be installed. Its helper must never stall setup.
+        string file = Path.Combine(Environment.SystemDirectory, "schtasks.exe");
+        string action = enabled ? "/Enable" : "/Disable";
+        try
+        {
+            using Process? process = Process.Start(new ProcessStartInfo(file, $"/Change /TN TURMO_ScheduleTask {action}")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            });
+            if (process is not null && !process.WaitForExit(10_000))
+                process.Kill();
+        }
+        catch (Exception exception) when (exception is Win32Exception or InvalidOperationException) { }
     }
 }
 
