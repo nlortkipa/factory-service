@@ -12,6 +12,7 @@ internal sealed class CompanionApplicationContext : ApplicationContext
     private readonly QrRefreshController _refresh;
     private readonly Func<AgentConfig> _loadConfiguration;
     private bool _exiting;
+    private bool _warningShown;
 
     public CompanionApplicationContext(bool installed = false)
     {
@@ -25,7 +26,6 @@ internal sealed class CompanionApplicationContext : ApplicationContext
 
         var menu = new ContextMenuStrip();
         menu.Items.Add("Refresh Turmo QR", null, async (_, _) => await _refresh!.TickAsync(force: true));
-        menu.Items.Add("Open survey in browser", null, async (_, _) => await OpenSurveyAsync());
         menu.Items.Add("Exit", null, (_, _) => ExitThread());
         _trayIcon = new NotifyIcon { Icon = SystemIcons.Application, Text = "Kartuli Cement — შეფასება", ContextMenuStrip = menu, Visible = true };
         _trayIcon.DoubleClick += async (_, _) => await _refresh!.TickAsync(force: true);
@@ -35,7 +35,11 @@ internal sealed class CompanionApplicationContext : ApplicationContext
             RequestQrAsync, exception =>
             {
                 AgentLog.User($"Turmo QR refresh failed: {exception}");
-                if (!_exiting) _trayIcon.ShowBalloonTip(5000, "Factory Service", exception.Message, ToolTipIcon.Warning);
+                // Refresh retries every few seconds; notify the user only once per run and
+                // keep the full history in the log.
+                if (_exiting || _warningShown) return;
+                _warningShown = true;
+                _trayIcon.ShowBalloonTip(5000, "Factory Service", exception.Message, ToolTipIcon.Warning);
             });
         // Poll ownership as well as listening for notifications: Fast User Switching and
         // console reconnects must be detected even if a session notification is missed.
@@ -85,22 +89,6 @@ internal sealed class CompanionApplicationContext : ApplicationContext
         catch (Exception exception)
         {
             AgentLog.User($"Turmo panel clear failed during logout: {exception}");
-        }
-    }
-
-    private async Task OpenSurveyAsync()
-    {
-        try
-        {
-            if (!_session.CanPublish) return;
-            AgentConfig config = QrRefreshController.LoadConfiguredOperator(_loadConfiguration);
-            AgentQrResponse response = await RequestQrAsync(config, null, CancellationToken.None);
-            if (_exiting || !_session.CanPublish || _loadConfiguration() != config) return;
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(response.SurveyUrl) { UseShellExecute = true });
-        }
-        catch (Exception exception)
-        {
-            if (!_exiting) MessageBox.Show(exception.Message, "Factory Service", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
     }
 

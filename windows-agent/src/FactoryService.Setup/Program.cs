@@ -26,7 +26,7 @@ internal static class Program
         ApplicationConfiguration.Initialize();
         if (args.Length >= 2 && args[0] == "--elevated")
         {
-            using var progress = new ProgressForm(provisioning, args[1]);
+            using var progress = new ProgressForm(provisioning, args[1], args.Contains("--desktop-shortcut"));
             Application.Run(progress);
             return 0;
         }
@@ -79,6 +79,7 @@ internal sealed class SetupForm : Form
     private readonly Label _currentPlant;
     private readonly Button _install;
     private readonly Button _uninstall;
+    private readonly CheckBox _desktopShortcut;
     private StoredAssignment? _storedAssignment;
 
     public SetupForm(Provisioning? provisioning)
@@ -110,7 +111,8 @@ internal sealed class SetupForm : Form
         var incomingTitle = new Label { Text = sameAssignment ? "ამ EXE-ში იგივე კონფიგურაციაა" : currentUserConfigured ? "დაყენების შემდეგ შეიცვლება" : "დასაყენებელი კონფიგურაცია", ForeColor = Color.FromArgb(86, 103, 113), Font = new Font("Segoe UI", 8, FontStyle.Bold), AutoSize = true, Location = new Point(28, 194) };
         var incomingOperator = new Label { Text = $"ოპერატორი: {provisioning?.OperatorName ?? "—"}", ForeColor = Color.FromArgb(25, 53, 70), Font = new Font("Segoe UI Semibold", 11), AutoEllipsis = true, Location = new Point(28, 224), Size = new Size(600, 30), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
         var incomingPlant = new Label { Text = $"ქარხანა: {provisioning?.PlantName ?? "—"}", ForeColor = Color.FromArgb(25, 53, 70), Font = new Font("Segoe UI Semibold", 11), AutoEllipsis = true, Location = new Point(28, 260), Size = new Size(600, 30), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
-        card.Controls.AddRange([currentTitle, _currentOperator, _currentPlant, statusDot, _status, divider, incomingTitle, incomingOperator, incomingPlant]);
+        _desktopShortcut = new CheckBox { Text = "სამუშაო მაგიდაზე მალსახმობის შექმნა", Checked = true, Enabled = provisioning is not null, ForeColor = Color.FromArgb(25, 53, 70), AutoSize = true, Location = new Point(28, 302) };
+        card.Controls.AddRange([currentTitle, _currentOperator, _currentPlant, statusDot, _status, divider, incomingTitle, incomingOperator, incomingPlant, _desktopShortcut]);
 
         _install = new Button { Text = sameAssignment ? "განახლება / აღდგენა" : currentUserConfigured ? "ოპერატორის შეცვლა" : "კლიენტის დაყენება", BackColor = Color.FromArgb(11, 156, 85), ForeColor = Color.White, FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI Semibold", 10), Size = new Size(202, 50), Location = new Point(30, 432), Enabled = provisioning is not null, Anchor = AnchorStyles.Bottom | AnchorStyles.Left };
         _install.FlatAppearance.BorderSize = 0;
@@ -158,7 +160,9 @@ internal sealed class SetupForm : Form
         {
             if (action == "install") WriteCurrentUserConfig(_provisioning!);
 
-            var start = new ProcessStartInfo(Environment.ProcessPath!, $"--elevated {action}") { UseShellExecute = true, Verb = "runas" };
+            string arguments = $"--elevated {action}";
+            if (action == "install" && _desktopShortcut.Checked) arguments += " --desktop-shortcut";
+            var start = new ProcessStartInfo(Environment.ProcessPath!, arguments) { UseShellExecute = true, Verb = "runas" };
             Process.Start(start);
             if (action == "uninstall") DeleteCurrentUserConfig();
             Close();
@@ -204,12 +208,13 @@ internal sealed class ProgressForm : Form
 {
     private readonly Provisioning? _provisioning;
     private readonly string _action;
+    private readonly bool _desktopShortcut;
     private readonly Label _message;
     private readonly ProgressBar _progress;
 
-    public ProgressForm(Provisioning? provisioning, string action)
+    public ProgressForm(Provisioning? provisioning, string action, bool desktopShortcut)
     {
-        _provisioning = provisioning; _action = action;
+        _provisioning = provisioning; _action = action; _desktopShortcut = desktopShortcut;
         Text = "ქართული ცემენტი — მომსახურების კლიენტი";
         ClientSize = new Size(570, 250); StartPosition = FormStartPosition.CenterScreen; BackColor = Color.White;
         AutoScaleMode = AutoScaleMode.Dpi; Font = new Font("Segoe UI", 10); ControlBox = false;
@@ -235,6 +240,16 @@ internal sealed class ProgressForm : Form
             }
             _progress.Style = ProgressBarStyle.Blocks; _progress.Value = 100;
             _message.Text = _action == "uninstall" ? "კლიენტი წარმატებით წაიშალა" : "კლიენტი დაყენებულია და ავტომატურად გაეშვება";
+            if (_action == "install" && !await Task.Run(TurmoDisplay.IsLikelyConnected))
+            {
+                // Shown once here instead of repeatedly from the tray while the panel is missing.
+                MessageBox.Show(this,
+                    "Turmo ეკრანი ვერ მოიძებნა. შეამოწმეთ, რომ ეკრანი USB-ით არის მიერთებული და TURMO-ს ოფიციალური პროგრამა დახურულია. " +
+                    "კლიენტი დაყენებულია და ეკრანის მიერთებისთანავე ავტომატურად აჩვენებს QR კოდს.",
+                    Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                Close();
+                return;
+            }
             await Task.Delay(1200); Close();
         }
         catch (Exception exception)
@@ -289,6 +304,8 @@ internal sealed class ProgressForm : Form
                 key.SetValue("FactoryServiceCompanion", $"\"{installedCompanion}\" --background --installed");
             Run("schtasks.exe", "/Change /TN \"TURMO_ScheduleTask\" /Disable", true);
             Run("sc.exe", "start FactoryServiceAgent");
+            Invoke(() => _message.Text = "მალსახმობები იქმნება…");
+            Shortcuts.Create(installedCompanion, _desktopShortcut);
         }
         finally { try { Directory.Delete(tempRoot, true); } catch { } }
     }
@@ -301,6 +318,7 @@ internal sealed class ProgressForm : Form
         Run("taskkill.exe", "/IM FactoryService.Companion.exe /F", true);
         Run("sc.exe", "delete FactoryServiceAgent", true);
         Run("schtasks.exe", "/Change /TN \"TURMO_ScheduleTask\" /Enable", true);
+        Shortcuts.Remove();
         string install = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Factory Service Agent");
         if (Directory.Exists(install))
         {
@@ -316,5 +334,91 @@ internal sealed class ProgressForm : Form
         process.WaitForExit();
         if (!allowFailure && process.ExitCode != 0) throw new InvalidOperationException($"{file} შეცდომით დასრულდა (კოდი: {process.ExitCode}).");
         return process.ExitCode;
+    }
+}
+
+internal static class Shortcuts
+{
+    private const string Name = "ქართული ცემენტი — შეფასება.lnk";
+    // The installer runs elevated, possibly as a different administrator account, so the
+    // shortcuts go to the all-users locations that every operator account sees.
+    private static string DesktopPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory), Name);
+    private static string StartMenuPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms), Name);
+
+    public static void Create(string companion, bool desktop)
+    {
+        Write(StartMenuPath, companion);
+        if (desktop) Write(DesktopPath, companion);
+        else Delete(DesktopPath);
+    }
+
+    public static void Remove()
+    {
+        Delete(DesktopPath);
+        Delete(StartMenuPath);
+    }
+
+    private static void Write(string path, string companion)
+    {
+        try
+        {
+            Type shellType = Type.GetTypeFromProgID("WScript.Shell") ?? throw new InvalidOperationException("WScript.Shell is unavailable.");
+            dynamic shell = Activator.CreateInstance(shellType)!;
+            try
+            {
+                dynamic shortcut = shell.CreateShortcut(path);
+                shortcut.TargetPath = companion;
+                shortcut.Arguments = "--installed";
+                shortcut.WorkingDirectory = Path.GetDirectoryName(companion);
+                shortcut.Description = "Turmo QR შეფასების კლიენტი";
+                shortcut.IconLocation = companion + ",0";
+                shortcut.Save();
+                System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shortcut);
+            }
+            finally { System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shell); }
+        }
+        // A missing shortcut must not fail an otherwise complete installation.
+        catch (Exception exception) when (exception is not OutOfMemoryException) { }
+    }
+
+    private static void Delete(string path)
+    {
+        try { if (File.Exists(path)) File.Delete(path); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+    }
+}
+
+internal static class TurmoDisplay
+{
+    private static readonly string[] Identifiers = ["USB35INCHIPSV2", "TURMO"];
+
+    // Mirrors the companion's port selection: a port identified as Turmo, or the only
+    // serial port present. Errors count as "connected" so the check never blocks setup.
+    public static bool IsLikelyConnected()
+    {
+        try
+        {
+            using (RegistryKey? serialComm = Registry.LocalMachine.OpenSubKey(@"HARDWARE\DEVICEMAP\SERIALCOMM"))
+            {
+                int ports = serialComm?.GetValueNames().Length ?? 0;
+                if (ports == 0) return false;
+                if (ports == 1) return true;
+            }
+            using RegistryKey? usb = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Enum\USB");
+            if (usb is null) return true;
+            foreach (string device in usb.GetSubKeyNames())
+            {
+                using RegistryKey? deviceKey = usb.OpenSubKey(device);
+                if (deviceKey is null) continue;
+                foreach (string instance in deviceKey.GetSubKeyNames())
+                {
+                    using RegistryKey? instanceKey = deviceKey.OpenSubKey(instance);
+                    string metadata = string.Join(" ", device, instanceKey?.GetValue("FriendlyName"), instanceKey?.GetValue("DeviceDesc"));
+                    if (Identifiers.Any(id => metadata.Contains(id, StringComparison.OrdinalIgnoreCase))) return true;
+                }
+            }
+            return false;
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException) { return true; }
     }
 }

@@ -14,8 +14,8 @@ internal static class Program
         if (!isFirstInstance)
         {
             if (!args.Contains("--background")) MessageBox.Show(
-                "Factory Service Companion is already running for this user.",
-                "Factory Service",
+                "შეფასების კლიენტი უკვე გაშვებულია. მისი მენიუ იხილეთ Windows-ის საათთან არსებულ ხატულებში.",
+                "ქართული ცემენტი — შეფასება",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information);
             return;
