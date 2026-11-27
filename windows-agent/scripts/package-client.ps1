@@ -62,11 +62,13 @@ try {
 
     Copy-Item -Path (Join-Path $servicePublish "*") -Destination $payloadRoot -Recurse -Force
     Copy-Item -Path (Join-Path $companionPublish "*") -Destination $payloadRoot -Recurse -Force
+    Copy-Item -LiteralPath (Join-Path $agentRoot "src\FactoryService.ico") -Destination $payloadRoot -Force
     Copy-Item -LiteralPath (Join-Path $agentRoot "scripts\companion-login-guard.cmd") -Destination (Join-Path $payloadRoot "FactoryService.CompanionGuard.cmd") -Force
     $requiredFiles = @(
         "payload\FactoryService.Service.exe",
         "payload\FactoryService.Companion.exe",
-        "payload\FactoryService.CompanionGuard.cmd"
+        "payload\FactoryService.CompanionGuard.cmd",
+        "payload\FactoryService.ico"
     )
     foreach ($requiredFile in $requiredFiles) {
         if (-not (Test-Path -LiteralPath (Join-Path $packageRoot $requiredFile))) {

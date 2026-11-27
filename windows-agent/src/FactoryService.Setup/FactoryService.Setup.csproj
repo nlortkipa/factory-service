@@ -5,5 +5,9 @@
     <RootNamespace>FactoryService.Setup</RootNamespace>
     <AssemblyName>FactoryService.Setup</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>..\FactoryService.ico</ApplicationIcon>
   </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.0" />
+  </ItemGroup>
 </Project>

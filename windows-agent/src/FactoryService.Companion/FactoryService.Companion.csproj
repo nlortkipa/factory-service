@@ -4,6 +4,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <RootNamespace>FactoryService.Companion</RootNamespace>
     <AssemblyName>FactoryService.Companion</AssemblyName>
+    <ApplicationIcon>..\FactoryService.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>

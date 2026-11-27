@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.IO.Compression;
 using System.Net.Http.Json;
-using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Win32;
@@ -24,11 +23,11 @@ internal static class Program
             return provisioning?.OperatorId == args[1] ? 0 : 2;
 
         ApplicationConfiguration.Initialize();
-        if (args.Length >= 2 && args[0] == "--elevated")
+        if (args is ["--elevated", "install" or "uninstall"])
         {
-            using var progress = new ProgressForm(provisioning, args[1], args.Contains("--desktop-shortcut"));
+            using var progress = new ProgressForm(provisioning, args[1]);
             Application.Run(progress);
-            return 0;
+            return progress.ExitCode;
         }
         Application.Run(new SetupForm(provisioning));
         return 0;
@@ -79,18 +78,20 @@ internal sealed class SetupForm : Form
     private readonly Label _currentPlant;
     private readonly Button _install;
     private readonly Button _uninstall;
-    private readonly CheckBox _desktopShortcut;
+    private readonly Button _repair;
     private StoredAssignment? _storedAssignment;
 
     public SetupForm(Provisioning? provisioning)
     {
         _provisioning = provisioning;
-        bool installed = Installed();
+        bool installed = File.Exists(InstalledClient.ServicePath);
+        bool ready = CanConfigureUser();
         _storedAssignment = ReadCurrentUserConfig();
         bool currentUserConfigured = installed && !string.IsNullOrWhiteSpace(_storedAssignment?.OperatorId);
         bool sameAssignment = currentUserConfigured && provisioning is not null &&
             string.Equals(_storedAssignment!.OperatorId, provisioning.OperatorId, StringComparison.Ordinal);
         Text = "ქართული ცემენტი — მომსახურების კლიენტი";
+        Icon = Icon.ExtractAssociatedIcon(Environment.ProcessPath!);
         ClientSize = new Size(720, 520);
         MinimumSize = new Size(680, 500);
         StartPosition = FormStartPosition.CenterScreen;
@@ -111,17 +112,19 @@ internal sealed class SetupForm : Form
         var incomingTitle = new Label { Text = sameAssignment ? "ამ EXE-ში იგივე კონფიგურაციაა" : currentUserConfigured ? "დაყენების შემდეგ შეიცვლება" : "დასაყენებელი კონფიგურაცია", ForeColor = Color.FromArgb(86, 103, 113), Font = new Font("Segoe UI", 8, FontStyle.Bold), AutoSize = true, Location = new Point(28, 194) };
         var incomingOperator = new Label { Text = $"ოპერატორი: {provisioning?.OperatorName ?? "—"}", ForeColor = Color.FromArgb(25, 53, 70), Font = new Font("Segoe UI Semibold", 11), AutoEllipsis = true, Location = new Point(28, 224), Size = new Size(600, 30), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
         var incomingPlant = new Label { Text = $"ქარხანა: {provisioning?.PlantName ?? "—"}", ForeColor = Color.FromArgb(25, 53, 70), Font = new Font("Segoe UI Semibold", 11), AutoEllipsis = true, Location = new Point(28, 260), Size = new Size(600, 30), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
-        _desktopShortcut = new CheckBox { Text = "სამუშაო მაგიდაზე მალსახმობის შექმნა", Checked = true, Enabled = provisioning is not null, ForeColor = Color.FromArgb(25, 53, 70), AutoSize = true, Location = new Point(28, 302) };
-        card.Controls.AddRange([currentTitle, _currentOperator, _currentPlant, statusDot, _status, divider, incomingTitle, incomingOperator, incomingPlant, _desktopShortcut]);
+        card.Controls.AddRange([currentTitle, _currentOperator, _currentPlant, statusDot, _status, divider, incomingTitle, incomingOperator, incomingPlant]);
 
-        _install = new Button { Text = sameAssignment ? "განახლება / აღდგენა" : currentUserConfigured ? "ოპერატორის შეცვლა" : "კლიენტის დაყენება", BackColor = Color.FromArgb(11, 156, 85), ForeColor = Color.White, FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI Semibold", 10), Size = new Size(202, 50), Location = new Point(30, 432), Enabled = provisioning is not null, Anchor = AnchorStyles.Bottom | AnchorStyles.Left };
+        _install = new Button { Text = sameAssignment && !ready ? "განახლება / აღდგენა" : currentUserConfigured && !sameAssignment ? "ოპერატორის შეცვლა" : ready ? "ოპერატორის დაყენება" : "კლიენტის დაყენება", BackColor = Color.FromArgb(11, 156, 85), ForeColor = Color.White, FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI Semibold", 10), Size = new Size(202, 50), Location = new Point(30, 432), Enabled = provisioning is not null, Anchor = AnchorStyles.Bottom | AnchorStyles.Left };
         _install.FlatAppearance.BorderSize = 0;
         _install.FlatAppearance.MouseOverBackColor = Color.FromArgb(8, 124, 68);
-        _install.Click += (_, _) => Begin("install");
-        _uninstall = new Button { Text = "წაშლა", BackColor = Color.FromArgb(239, 243, 244), ForeColor = Color.FromArgb(160, 53, 46), FlatStyle = FlatStyle.Flat, Size = new Size(116, 50), Location = new Point(244, 432), Enabled = installed, Anchor = AnchorStyles.Bottom | AnchorStyles.Left };
+        _install.Click += async (_, _) => await BeginAsync("install", assignOperator: true);
+        bool showRepair = ready && provisioning is not null;
+        _repair = new Button { Text = "განახლება / აღდგენა", FlatStyle = FlatStyle.Flat, Size = new Size(180, 50), Location = new Point(244, 432), Visible = showRepair, Anchor = AnchorStyles.Bottom | AnchorStyles.Left };
+        _repair.Click += async (_, _) => await BeginAsync("install", assignOperator: false);
+        _uninstall = new Button { Text = "წაშლა", BackColor = Color.FromArgb(239, 243, 244), ForeColor = Color.FromArgb(160, 53, 46), FlatStyle = FlatStyle.Flat, Size = new Size(116, 50), Location = new Point(showRepair ? 436 : 244, 432), Enabled = installed, Anchor = AnchorStyles.Bottom | AnchorStyles.Left };
         _uninstall.FlatAppearance.BorderColor = Color.FromArgb(218, 226, 229);
-        _uninstall.Click += (_, _) => Begin("uninstall");
-        Controls.AddRange([user, card, _install, _uninstall]);
+        _uninstall.Click += async (_, _) => await BeginAsync("uninstall", assignOperator: false);
+        Controls.AddRange([user, card, _install, _repair, _uninstall]);
         if (currentUserConfigured && string.IsNullOrWhiteSpace(_storedAssignment?.OperatorName))
             Shown += ResolveStoredAssignment;
     }
@@ -145,7 +148,6 @@ internal sealed class SetupForm : Form
             _storedAssignment = _storedAssignment with { OperatorName = lookup.OperatorName, PlantName = lookup.PlantName };
             _currentOperator.Text = $"ოპერატორი: {lookup.OperatorName}";
             _currentPlant.Text = $"ქარხანა: {lookup.PlantName}";
-            WriteStoredAssignment(_storedAssignment);
         }
         catch
         {
@@ -154,27 +156,39 @@ internal sealed class SetupForm : Form
         }
     }
 
-    private void Begin(string action)
+    private async Task BeginAsync(string action, bool assignOperator)
     {
         try
         {
-            if (action == "install") WriteCurrentUserConfig(_provisioning!);
-
-            string arguments = $"--elevated {action}";
-            if (action == "install" && _desktopShortcut.Checked) arguments += " --desktop-shortcut";
-            var start = new ProcessStartInfo(Environment.ProcessPath!, arguments) { UseShellExecute = true, Verb = "runas" };
-            Process.Start(start);
-            if (action == "uninstall") DeleteCurrentUserConfig();
+            if (!assignOperator || !CanConfigureUser())
+            {
+                var start = new ProcessStartInfo(Environment.ProcessPath!, $"--elevated {action}") { UseShellExecute = true, Verb = "runas" };
+                using Process process = Process.Start(start) ?? throw new InvalidOperationException("დაყენება ვერ დაიწყო.");
+                Hide();
+                await process.WaitForExitAsync();
+                if (process.ExitCode != 0)
+                {
+                    Show();
+                    return;
+                }
+            }
+            if (assignOperator) WriteCurrentUserConfig(_provisioning!);
+            if (action == "uninstall" && File.Exists(UserConfigPath))
+                InstalledClient.RetrySharingViolation(() => File.Delete(UserConfigPath));
             Close();
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
         {
+            Show();
             _status.Text = exception is System.ComponentModel.Win32Exception { NativeErrorCode: 1223 }
                 ? "ადმინისტრატორის დასტური გაუქმდა"
                 : $"დაყენება ვერ დაიწყო: {exception.Message}";
             _status.ForeColor = Color.FromArgb(180, 48, 40);
         }
     }
+
+    private static bool CanConfigureUser() =>
+        InstalledClient.IsInstalled && File.Exists(Shortcuts.IconPath) && Shortcuts.Exists && InstalledClient.IsRunning;
 
     private static string UserConfigPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Factory Service Agent", "config.json");
     private static StoredAssignment? ReadCurrentUserConfig()
@@ -196,26 +210,29 @@ internal sealed class SetupForm : Form
     {
         Directory.CreateDirectory(Path.GetDirectoryName(UserConfigPath)!);
         string json = JsonSerializer.Serialize(value, new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
-        string temporary = UserConfigPath + ".new";
-        File.WriteAllText(temporary, json, new UTF8Encoding(false));
-        File.Move(temporary, UserConfigPath, true);
+        string temporary = UserConfigPath + "." + Guid.NewGuid().ToString("N") + ".new";
+        try
+        {
+            File.WriteAllText(temporary, json, new UTF8Encoding(false));
+            InstalledClient.RetrySharingViolation(() => File.Move(temporary, UserConfigPath, true));
+        }
+        finally { File.Delete(temporary); }
     }
-    private static void DeleteCurrentUserConfig() { if (File.Exists(UserConfigPath)) File.Delete(UserConfigPath); }
-    private static bool Installed() => File.Exists(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Factory Service Agent", "FactoryService.Service.exe"));
 }
 
 internal sealed class ProgressForm : Form
 {
     private readonly Provisioning? _provisioning;
     private readonly string _action;
-    private readonly bool _desktopShortcut;
     private readonly Label _message;
     private readonly ProgressBar _progress;
+    public int ExitCode { get; private set; } = 1;
 
-    public ProgressForm(Provisioning? provisioning, string action, bool desktopShortcut)
+    public ProgressForm(Provisioning? provisioning, string action)
     {
-        _provisioning = provisioning; _action = action; _desktopShortcut = desktopShortcut;
+        _provisioning = provisioning; _action = action;
         Text = "ქართული ცემენტი — მომსახურების კლიენტი";
+        Icon = Icon.ExtractAssociatedIcon(Environment.ProcessPath!);
         ClientSize = new Size(570, 250); StartPosition = FormStartPosition.CenterScreen; BackColor = Color.White;
         AutoScaleMode = AutoScaleMode.Dpi; Font = new Font("Segoe UI", 10); ControlBox = false;
         var accent = new Panel { Dock = DockStyle.Left, Width = 7, BackColor = Color.FromArgb(11, 156, 85) };
@@ -232,13 +249,14 @@ internal sealed class ProgressForm : Form
     {
         try
         {
-            if (_action == "uninstall") await Task.Run(Uninstall);
+            if (_action == "uninstall") await Task.Run(() => InstalledClient.WithMachineLock(Uninstall));
             else
             {
                 if (_provisioning is null) throw new InvalidDataException("ამ გამშვებს ოპერატორი არ აქვს მინიჭებული.");
                 await InstallAsync(_provisioning);
             }
             _progress.Style = ProgressBarStyle.Blocks; _progress.Value = 100;
+            ExitCode = 0;
             _message.Text = _action == "uninstall" ? "კლიენტი წარმატებით წაიშალა" : "კლიენტი დაყენებულია და ავტომატურად გაეშვება";
             if (_action == "install" && !await Task.Run(TurmoDisplay.IsLikelyConnected))
             {
@@ -255,7 +273,10 @@ internal sealed class ProgressForm : Form
         catch (Exception exception)
         {
             _progress.Style = ProgressBarStyle.Blocks; _progress.Value = 0;
-            _message.Text = $"დაყენება ვერ დასრულდა: {exception.Message}";
+            _message.Text = "ოპერაცია ვერ დასრულდა";
+            var details = new TextBox { Location = new Point(37, 174), Size = new Size(495, 55), Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Text = exception.Message };
+            Controls.Add(details);
+            details.BringToFront();
             ControlBox = true;
         }
     }
@@ -275,57 +296,98 @@ internal sealed class ProgressForm : Form
                 await using var target = File.Create(zip);
                 await response.Content.CopyToAsync(target);
             }
-            string payload = Path.Combine(tempRoot, "payload");
-            ZipFile.ExtractToDirectory(zip, payload);
-            string service = Path.Combine(payload, "FactoryService.Service.exe");
-            string companion = Path.Combine(payload, "FactoryService.Companion.exe");
-            if (!File.Exists(service) || !File.Exists(companion)) throw new InvalidDataException("ჩამოტვირთული კლიენტის პაკეტი არასრულია.");
-
-            Invoke(() => _message.Text = "სისტემური სერვისი ყენდება…");
-            Run("sc.exe", "stop FactoryServiceAgent", allowFailure: true);
-            Run("taskkill.exe", "/IM FactoryService.Companion.exe /F", allowFailure: true);
-            string install = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Factory Service Agent");
-            Directory.CreateDirectory(install);
-            foreach (string source in Directory.EnumerateFiles(payload, "*", SearchOption.AllDirectories))
-            {
-                string relative = Path.GetRelativePath(payload, source);
-                string destination = Path.Combine(install, relative);
-                Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-                File.Copy(source, destination, true);
-            }
-            string installedService = Path.Combine(install, "FactoryService.Service.exe");
-            string installedCompanion = Path.Combine(install, "FactoryService.Companion.exe");
-            if (Run("sc.exe", "query FactoryServiceAgent", true) != 0)
-                Run("sc.exe", $"create FactoryServiceAgent binPath= \"\\\"{installedService}\\\"\" DisplayName= \"Factory Service Agent\" start= auto");
-            else Run("sc.exe", $"config FactoryServiceAgent binPath= \"\\\"{installedService}\\\"\" start= auto obj= LocalSystem");
-            Run("sc.exe", "description FactoryServiceAgent \"ავტომატურად უშვებს მომსახურების შეფასების კლიენტს.\"");
-            Run("sc.exe", "failure FactoryServiceAgent reset= 86400 actions= restart/5000/restart/15000/restart/30000");
-            using (RegistryKey key = Registry.LocalMachine.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"))
-                key.SetValue("FactoryServiceCompanion", $"\"{installedCompanion}\" --background --installed");
-            Run("schtasks.exe", "/Change /TN \"TURMO_ScheduleTask\" /Disable", true);
-            Run("sc.exe", "start FactoryServiceAgent");
-            Invoke(() => _message.Text = "მალსახმობები იქმნება…");
-            Shortcuts.Create(installedCompanion, _desktopShortcut);
+            _message.Text = "სისტემური სერვისი ყენდება…";
+            await Task.Run(() => InstalledClient.WithMachineLock(() => InstallPayload(zip)));
         }
         finally { try { Directory.Delete(tempRoot, true); } catch { } }
+    }
+
+    private void InstallPayload(string zip)
+    {
+        string install = InstalledClient.InstallDirectory;
+        string stage = install + "." + Guid.NewGuid().ToString("N");
+        string backup = stage + ".previous";
+        try
+        {
+            ZipFile.ExtractToDirectory(zip, stage);
+            if (!File.Exists(Path.Combine(stage, InstalledClient.ServiceFileName)) ||
+                !File.Exists(Path.Combine(stage, InstalledClient.CompanionFileName)))
+                throw new InvalidDataException("ჩამოტვირთული კლიენტის პაკეტი არასრულია.");
+
+            bool wasRunning = InstalledClient.IsRunning;
+            bool replaced = false;
+            try
+            {
+                InstalledClient.Stop();
+                if (Directory.Exists(install))
+                    InstalledClient.RetrySharingViolation(() => Directory.Move(install, backup));
+                InstalledClient.RetrySharingViolation(() => Directory.Move(stage, install));
+                replaced = true;
+                ConfigureAndStartService();
+            }
+            catch (Exception updateError)
+            {
+                try
+                {
+                    if (Directory.Exists(backup))
+                    {
+                        if (replaced)
+                        {
+                            InstalledClient.Stop();
+                            InstalledClient.RetrySharingViolation(() => Directory.Move(install, stage));
+                        }
+                        Directory.Move(backup, install);
+                    }
+                    if (wasRunning && !InstalledClient.IsRunning)
+                        Run("sc.exe", "start FactoryServiceAgent");
+                }
+                catch (Exception recoveryError)
+                {
+                    throw new AggregateException(updateError, recoveryError);
+                }
+                throw;
+            }
+            TryDeleteDirectory(backup);
+            Invoke(() => _message.Text = "მალსახმობები იქმნება…");
+            Invoke(Shortcuts.Create);
+        }
+        finally { TryDeleteDirectory(stage); }
+    }
+
+    private static void ConfigureAndStartService()
+    {
+        string installedService = InstalledClient.ServicePath;
+        if (Run("sc.exe", "query FactoryServiceAgent", true) != 0)
+            Run("sc.exe", $"create FactoryServiceAgent binPath= \"\\\"{installedService}\\\"\" DisplayName= \"Factory Service Agent\" start= auto");
+        else Run("sc.exe", $"config FactoryServiceAgent binPath= \"\\\"{installedService}\\\"\" start= auto obj= LocalSystem");
+        Run("sc.exe", "description FactoryServiceAgent \"ავტომატურად უშვებს მომსახურების შეფასების კლიენტს.\"");
+        Run("sc.exe", "failure FactoryServiceAgent reset= 86400 actions= restart/5000/restart/15000/restart/30000");
+        using (RegistryKey key = Registry.LocalMachine.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"))
+            key.SetValue("FactoryServiceCompanion", $"\"{InstalledClient.CompanionPath}\" --background --installed");
+        Run("schtasks.exe", "/Change /TN \"TURMO_ScheduleTask\" /Disable", true);
+        Run("sc.exe", "start FactoryServiceAgent");
+        InstalledClient.WaitUntilRunning();
+    }
+
+    private static void TryDeleteDirectory(string path)
+    {
+        try { if (Directory.Exists(path)) Directory.Delete(path, true); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     private void Uninstall()
     {
         Invoke(() => _message.Text = "კლიენტი ჩერდება და იშლება…");
         using (RegistryKey? key = Registry.LocalMachine.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", true)) key?.DeleteValue("FactoryServiceCompanion", false);
-        Run("sc.exe", "stop FactoryServiceAgent", true);
-        Run("taskkill.exe", "/IM FactoryService.Companion.exe /F", true);
-        Run("sc.exe", "delete FactoryServiceAgent", true);
+        InstalledClient.Stop();
+        if (Run("sc.exe", "query FactoryServiceAgent", true) == 0)
+            Run("sc.exe", "delete FactoryServiceAgent");
         Run("schtasks.exe", "/Change /TN \"TURMO_ScheduleTask\" /Enable", true);
         Shortcuts.Remove();
-        string install = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Factory Service Agent");
+        string install = InstalledClient.InstallDirectory;
         if (Directory.Exists(install))
-        {
-            try { Directory.Delete(install, true); }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
-        }
+            InstalledClient.RetrySharingViolation(() => Directory.Delete(install, true));
     }
 
     private static int Run(string file, string arguments, bool allowFailure = false)
@@ -345,46 +407,41 @@ internal static class Shortcuts
     private static string DesktopPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory), Name);
     private static string StartMenuPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms), Name);
 
-    public static void Create(string companion, bool desktop)
+    public static string IconPath => Path.Combine(InstalledClient.InstallDirectory, "FactoryService.ico");
+    public static bool Exists => File.Exists(DesktopPath) && File.Exists(StartMenuPath);
+
+    public static void Create()
     {
-        Write(StartMenuPath, companion);
-        if (desktop) Write(DesktopPath, companion);
-        else Delete(DesktopPath);
+        Write(StartMenuPath);
+        Write(DesktopPath);
     }
 
     public static void Remove()
     {
-        Delete(DesktopPath);
-        Delete(StartMenuPath);
+        File.Delete(DesktopPath);
+        File.Delete(StartMenuPath);
     }
 
-    private static void Write(string path, string companion)
+    private static void Write(string path)
     {
+        string companion = InstalledClient.CompanionPath;
+        Type shellType = Type.GetTypeFromProgID("WScript.Shell") ?? throw new InvalidOperationException("WScript.Shell is unavailable.");
+        dynamic shell = Activator.CreateInstance(shellType)!;
         try
         {
-            Type shellType = Type.GetTypeFromProgID("WScript.Shell") ?? throw new InvalidOperationException("WScript.Shell is unavailable.");
-            dynamic shell = Activator.CreateInstance(shellType)!;
+            dynamic shortcut = shell.CreateShortcut(path);
             try
             {
-                dynamic shortcut = shell.CreateShortcut(path);
                 shortcut.TargetPath = companion;
                 shortcut.Arguments = "--installed";
                 shortcut.WorkingDirectory = Path.GetDirectoryName(companion);
                 shortcut.Description = "Turmo QR შეფასების კლიენტი";
-                shortcut.IconLocation = companion + ",0";
+                shortcut.IconLocation = (File.Exists(IconPath) ? IconPath : companion) + ",0";
                 shortcut.Save();
-                System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shortcut);
             }
-            finally { System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shell); }
+            finally { System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shortcut); }
         }
-        // A missing shortcut must not fail an otherwise complete installation.
-        catch (Exception exception) when (exception is not OutOfMemoryException) { }
-    }
-
-    private static void Delete(string path)
-    {
-        try { if (File.Exists(path)) File.Delete(path); }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+        finally { System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shell); }
     }
 }
 

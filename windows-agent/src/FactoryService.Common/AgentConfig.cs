@@ -90,8 +90,9 @@ public static class AgentConfigStore
 
     private static AgentConfig Deserialize(string path)
     {
-        string json = File.ReadAllText(path);
-        return JsonSerializer.Deserialize<AgentConfig>(json, JsonOptions)
+        using var stream = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
+        using var reader = new StreamReader(stream);
+        return JsonSerializer.Deserialize<AgentConfig>(reader.ReadToEnd(), JsonOptions)
             ?? throw new InvalidDataException($"Configuration file is empty: {path}");
     }
 }

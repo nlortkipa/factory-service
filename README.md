@@ -131,11 +131,17 @@ operator. The browser attaches the current backend URL, payload URL, Operator ID
 operator name, and plant name to a copy of the launcher. Send that one EXE to the
 recipient. When they run it, the launcher:
 
-1. shows the assigned operator and plant for confirmation;
-2. writes `%LOCALAPPDATA%\Factory Service Agent\config.json` for the Windows user
-   who opened the launcher;
-3. requests administrator approval and downloads the latest payload;
-4. installs or repairs the Windows service and companion.
+1. shows the assigned operator and plant;
+2. installs or updates the Windows service and companion if needed, with
+   Windows administrator approval for machine-wide changes;
+3. creates branded desktop and Start menu shortcuts for all Windows users;
+4. saves the assignment to `%LOCALAPPDATA%\Factory Service Agent\config.json`
+   for the Windows user who opened the launcher.
+
+Once the machine-wide client is ready, assigning an operator to another
+Windows user requires no elevation. The shortcuts open the client window.
+Administrators can deploy [the taskbar layout](windows-agent/taskbar-layout.xml)
+through Windows device policy to pin the client automatically on managed PCs.
 
 The same launcher also offers **Uninstall**, which removes the current user's
 configuration and the machine-wide client. No CMD or PowerShell script is part
