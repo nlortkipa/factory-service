@@ -173,8 +173,24 @@ internal sealed class SetupForm : Form
                 }
             }
             if (assignOperator) WriteCurrentUserConfig(_provisioning!);
-            if (action == "uninstall" && File.Exists(UserConfigPath))
-                InstalledClient.RetrySharingViolation(() => File.Delete(UserConfigPath));
+            if (action == "uninstall")
+            {
+                if (File.Exists(UserConfigPath))
+                    InstalledClient.RetrySharingViolation(() => File.Delete(UserConfigPath));
+                Shortcuts.RemoveForCurrentUser();
+            }
+            else
+            {
+                string[] failures = Shortcuts.CreateForCurrentUser();
+                if (failures.Length > 0)
+                {
+                    Show();
+                    MessageBox.Show(this,
+                        "კლიენტი დაყენებულია. Windows-მა ზოგიერთი მალსახმობი ვერ შექმნა." +
+                        Environment.NewLine + Environment.NewLine + string.Join(Environment.NewLine, failures),
+                        Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+            }
             Close();
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
@@ -392,52 +408,6 @@ internal sealed class ProgressForm : Form
         process.WaitForExit();
         if (!allowFailure && process.ExitCode != 0) throw new InvalidOperationException($"{file} შეცდომით დასრულდა (კოდი: {process.ExitCode}).");
         return process.ExitCode;
-    }
-}
-
-internal static class Shortcuts
-{
-    private const string Name = "ქართული ცემენტი — შეფასება.lnk";
-    // The installer runs elevated, possibly as a different administrator account, so the
-    // shortcuts go to the all-users locations that every operator account sees.
-    private static string DesktopPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory), Name);
-    private static string StartMenuPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms), Name);
-
-    public static string IconPath => Path.Combine(InstalledClient.InstallDirectory, "FactoryService.ico");
-    public static bool Exists => File.Exists(DesktopPath) && File.Exists(StartMenuPath);
-
-    public static void Create()
-    {
-        Write(StartMenuPath);
-        Write(DesktopPath);
-    }
-
-    public static void Remove()
-    {
-        File.Delete(DesktopPath);
-        File.Delete(StartMenuPath);
-    }
-
-    private static void Write(string path)
-    {
-        string companion = InstalledClient.CompanionPath;
-        Type shellType = Type.GetTypeFromProgID("WScript.Shell") ?? throw new InvalidOperationException("WScript.Shell is unavailable.");
-        dynamic shell = Activator.CreateInstance(shellType)!;
-        try
-        {
-            dynamic shortcut = shell.CreateShortcut(path);
-            try
-            {
-                shortcut.TargetPath = companion;
-                shortcut.Arguments = "--installed";
-                shortcut.WorkingDirectory = Path.GetDirectoryName(companion);
-                shortcut.Description = "Turmo QR შეფასების კლიენტი";
-                shortcut.IconLocation = (File.Exists(IconPath) ? IconPath : companion) + ",0";
-                shortcut.Save();
-            }
-            finally { System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shortcut); }
-        }
-        finally { System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shell); }
     }
 }
 
