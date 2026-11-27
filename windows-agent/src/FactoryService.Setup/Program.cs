@@ -1,6 +1,6 @@
 using System.Diagnostics;
-using System.IO.Compression;
 using System.Net.Http.Json;
+using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Win32;
@@ -249,6 +249,10 @@ internal sealed class ProgressForm : Form
     {
         try
         {
+            using var identity = WindowsIdentity.GetCurrent();
+            if (!new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))
+                throw new UnauthorizedAccessException("კლიენტის დაყენებასა და წაშლას Windows-ის ადმინისტრატორის უფლებები სჭირდება.");
+
             if (_action == "uninstall") await Task.Run(() => InstalledClient.WithMachineLock(Uninstall));
             else
             {
@@ -273,8 +277,9 @@ internal sealed class ProgressForm : Form
         catch (Exception exception)
         {
             _progress.Style = ProgressBarStyle.Blocks; _progress.Value = 0;
-            _message.Text = "ოპერაცია ვერ დასრულდა";
-            var details = new TextBox { Location = new Point(37, 174), Size = new Size(495, 55), Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Text = exception.Message };
+            string step = _message.Text.TrimEnd('…');
+            _message.Text = $"ოპერაცია ვერ დასრულდა — {step}";
+            var details = new TextBox { Location = new Point(37, 174), Size = new Size(495, 55), Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Text = $"{step}{Environment.NewLine}{exception.Message}" };
             Controls.Add(details);
             details.BringToFront();
             ControlBox = true;
@@ -296,7 +301,7 @@ internal sealed class ProgressForm : Form
                 await using var target = File.Create(zip);
                 await response.Content.CopyToAsync(target);
             }
-            _message.Text = "სისტემური სერვისი ყენდება…";
+            _message.Text = "დაყენება მზადდება…";
             await Task.Run(() => InstalledClient.WithMachineLock(() => InstallPayload(zip)));
         }
         finally { try { Directory.Delete(tempRoot, true); } catch { } }
@@ -304,54 +309,52 @@ internal sealed class ProgressForm : Form
 
     private void InstallPayload(string zip)
     {
-        string install = InstalledClient.InstallDirectory;
-        string stage = install + "." + Guid.NewGuid().ToString("N");
-        string backup = stage + ".previous";
+        var update = new PayloadUpdate(InstalledClient.InstallDirectory);
+        bool preserveRecovery = false;
         try
         {
-            ZipFile.ExtractToDirectory(zip, stage);
-            if (!File.Exists(Path.Combine(stage, InstalledClient.ServiceFileName)) ||
-                !File.Exists(Path.Combine(stage, InstalledClient.CompanionFileName)))
-                throw new InvalidDataException("ჩამოტვირთული კლიენტის პაკეტი არასრულია.");
+            Invoke(() => _message.Text = "კლიენტის პაკეტი იშლება…");
+            update.Prepare(zip);
 
             bool wasRunning = InstalledClient.IsRunning;
-            bool replaced = false;
+            bool hadService = Run("sc.exe", "query FactoryServiceAgent", true) == 0;
+            bool serviceConfigurationStarted = false;
             try
             {
+                Invoke(() => _message.Text = "სისტემური სერვისი ჩერდება…");
                 InstalledClient.Stop();
-                if (Directory.Exists(install))
-                    InstalledClient.RetrySharingViolation(() => Directory.Move(install, backup));
-                InstalledClient.RetrySharingViolation(() => Directory.Move(stage, install));
-                replaced = true;
+                Invoke(() => _message.Text = "კლიენტის ფაილები ახლდება…");
+                update.Apply();
+                Invoke(() => _message.Text = "სისტემური სერვისი ეშვება…");
+                serviceConfigurationStarted = true;
                 ConfigureAndStartService();
             }
             catch (Exception updateError)
             {
                 try
                 {
-                    if (Directory.Exists(backup))
-                    {
-                        if (replaced)
-                        {
-                            InstalledClient.Stop();
-                            InstalledClient.RetrySharingViolation(() => Directory.Move(install, stage));
-                        }
-                        Directory.Move(backup, install);
-                    }
+                    if (serviceConfigurationStarted) InstalledClient.Stop();
+                    if (update.HasChanges) update.Restore();
+                    if (serviceConfigurationStarted && !hadService && Run("sc.exe", "query FactoryServiceAgent", true) == 0)
+                        Run("sc.exe", "delete FactoryServiceAgent");
                     if (wasRunning && !InstalledClient.IsRunning)
+                    {
                         Run("sc.exe", "start FactoryServiceAgent");
+                        InstalledClient.WaitUntilRunning();
+                    }
                 }
                 catch (Exception recoveryError)
                 {
-                    throw new AggregateException(updateError, recoveryError);
+                    preserveRecovery = update.HasChanges;
+                    string recoveryPath = preserveRecovery ? $"{Environment.NewLine}{update.RecoveryDirectory}" : "";
+                    throw new InvalidOperationException($"{updateError.Message}{Environment.NewLine}აღდგენა ვერ დასრულდა: {recoveryError.Message}{recoveryPath}", recoveryError);
                 }
                 throw;
             }
-            TryDeleteDirectory(backup);
             Invoke(() => _message.Text = "მალსახმობები იქმნება…");
             Invoke(Shortcuts.Create);
         }
-        finally { TryDeleteDirectory(stage); }
+        finally { if (!preserveRecovery) update.CleanUp(); }
     }
 
     private static void ConfigureAndStartService()
@@ -362,18 +365,11 @@ internal sealed class ProgressForm : Form
         else Run("sc.exe", $"config FactoryServiceAgent binPath= \"\\\"{installedService}\\\"\" start= auto obj= LocalSystem");
         Run("sc.exe", "description FactoryServiceAgent \"ავტომატურად უშვებს მომსახურების შეფასების კლიენტს.\"");
         Run("sc.exe", "failure FactoryServiceAgent reset= 86400 actions= restart/5000/restart/15000/restart/30000");
+        Run("sc.exe", "start FactoryServiceAgent");
+        InstalledClient.WaitUntilRunning();
         using (RegistryKey key = Registry.LocalMachine.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"))
             key.SetValue("FactoryServiceCompanion", $"\"{InstalledClient.CompanionPath}\" --background --installed");
         Run("schtasks.exe", "/Change /TN \"TURMO_ScheduleTask\" /Disable", true);
-        Run("sc.exe", "start FactoryServiceAgent");
-        InstalledClient.WaitUntilRunning();
-    }
-
-    private static void TryDeleteDirectory(string path)
-    {
-        try { if (Directory.Exists(path)) Directory.Delete(path, true); }
-        catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
     }
 
     private void Uninstall()

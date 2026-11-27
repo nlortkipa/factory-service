@@ -96,12 +96,16 @@ internal static class InstalledClient
         }
     }
 
-    public static void RetrySharingViolation(Action operation)
+    public static void RetrySharingViolation(Action operation, bool retryAccessDenied = false)
     {
         for (int attempt = 0; ; attempt++)
         {
             try { operation(); return; }
             catch (IOException exception) when ((exception.HResult & 0xffff) is 32 or 33 && attempt < 20)
+            {
+                Thread.Sleep(250);
+            }
+            catch (UnauthorizedAccessException) when (retryAccessDenied && attempt < 20)
             {
                 Thread.Sleep(250);
             }
