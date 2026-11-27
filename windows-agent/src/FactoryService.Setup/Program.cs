@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
+using FactoryService.Common;
 using Microsoft.Win32;
 
 namespace FactoryService.Setup;
@@ -43,20 +44,43 @@ internal static class ProvisioningReader
         if (!string.IsNullOrWhiteSpace(development)) return Deserialize(development);
 
         using var stream = File.OpenRead(Environment.ProcessPath!);
-        int footerSize = Program.ProvisioningMarker.Length + sizeof(int);
-        if (stream.Length < footerSize) return null;
-        stream.Seek(-footerSize, SeekOrigin.End);
-        byte[] marker = new byte[Program.ProvisioningMarker.Length];
-        stream.ReadExactly(marker);
-        if (!marker.SequenceEqual(Program.ProvisioningMarker)) return null;
-        Span<byte> lengthBytes = stackalloc byte[sizeof(int)];
-        stream.ReadExactly(lengthBytes);
-        int length = BitConverter.ToInt32(lengthBytes);
-        if (length <= 0 || length > 16_384 || stream.Length < footerSize + length) return null;
-        stream.Seek(-(footerSize + length), SeekOrigin.End);
+        long templateLength = FindTemplateLength(stream, out int length);
+        if (length == 0) return null;
+        stream.Position = templateLength;
         byte[] json = new byte[length];
         stream.ReadExactly(json);
         return Deserialize(Encoding.UTF8.GetString(json));
+    }
+
+    public static void CopyTemplate(Stream source, Stream destination)
+    {
+        long remaining = FindTemplateLength(source, out _);
+        source.Position = 0;
+        byte[] buffer = new byte[128 * 1024];
+        while (remaining > 0)
+        {
+            int count = (int)Math.Min(remaining, buffer.Length);
+            source.ReadExactly(buffer.AsSpan(0, count));
+            destination.Write(buffer, 0, count);
+            remaining -= count;
+        }
+    }
+
+    private static long FindTemplateLength(Stream stream, out int length)
+    {
+        length = 0;
+        int footerSize = Program.ProvisioningMarker.Length + sizeof(int);
+        if (stream.Length < footerSize) return stream.Length;
+        stream.Seek(-footerSize, SeekOrigin.End);
+        byte[] marker = new byte[Program.ProvisioningMarker.Length];
+        stream.ReadExactly(marker);
+        if (!marker.SequenceEqual(Program.ProvisioningMarker)) return stream.Length;
+        Span<byte> lengthBytes = stackalloc byte[sizeof(int)];
+        stream.ReadExactly(lengthBytes);
+        int candidateLength = BitConverter.ToInt32(lengthBytes);
+        if (candidateLength <= 0 || candidateLength > 16_384 || stream.Length < footerSize + candidateLength) return stream.Length;
+        length = candidateLength;
+        return stream.Length - footerSize - length;
     }
 
     private static Provisioning? Deserialize(string json)
@@ -80,13 +104,14 @@ internal sealed class SetupForm : Form
     private readonly Button _install;
     private readonly Button _uninstall;
     private readonly Button _repair;
+    private readonly Button _clearAssignment;
     private StoredAssignment? _storedAssignment;
 
     public SetupForm(Provisioning? provisioning)
     {
         _provisioning = provisioning;
         bool installed = File.Exists(InstalledClient.ServicePath);
-        bool ready = CanConfigureUser();
+        bool maintenance = provisioning is null && MaintenanceLauncher.Current is not null;
         _storedAssignment = ReadCurrentUserConfig();
         bool currentUserConfigured = installed && !string.IsNullOrWhiteSpace(_storedAssignment?.OperatorId);
         bool sameAssignment = currentUserConfigured && provisioning is not null &&
@@ -108,23 +133,39 @@ internal sealed class SetupForm : Form
         _currentOperator = new Label { Text = $"ოპერატორი: {currentOperatorName}", ForeColor = Color.FromArgb(25, 53, 70), Font = new Font("Segoe UI Semibold", 11), AutoEllipsis = true, Location = new Point(28, 52), Size = new Size(600, 30), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
         _currentPlant = new Label { Text = $"ქარხანა: {currentPlantName}", ForeColor = Color.FromArgb(25, 53, 70), Font = new Font("Segoe UI Semibold", 11), AutoEllipsis = true, Location = new Point(28, 88), Size = new Size(600, 30), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
         var statusDot = new Label { Text = currentUserConfigured ? "" : "●", ForeColor = Color.FromArgb(139, 154, 162), Font = new Font("Segoe UI", 9), AutoSize = true, Location = new Point(28, 126) };
-        _status = new Label { Text = currentUserConfigured ? "" : installed ? "კლიენტი დაყენებულია, მაგრამ ეს მომხმარებელი არ არის გამართული" : "კლიენტი ჯერ არ არის დაყენებული", ForeColor = Color.FromArgb(72, 91, 102), Font = new Font("Segoe UI Semibold", 9), Location = new Point(50, 125), Size = new Size(575, 28), AutoEllipsis = true, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
+        _status = new Label { Text = currentUserConfigured ? "" : installed ? "კლიენტი დაყენებულია, მაგრამ ეს მომხმარებელი არ არის გამართული" : "კლიენტი ჯერ არ არის დაყენებული", ForeColor = Color.FromArgb(72, 91, 102), Font = new Font("Segoe UI Semibold", 9), Location = new Point(50, 125), Size = new Size(368, 28), AutoEllipsis = true, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
+        _clearAssignment = new Button { Text = "QR კოდების გამორთვა", FlatStyle = FlatStyle.Flat, Size = new Size(190, 36), Location = new Point(435, 116), Anchor = AnchorStyles.Top | AnchorStyles.Right, Enabled = File.Exists(UserConfigPath) && (_storedAssignment is null || currentUserConfigured) };
+        _clearAssignment.Click += (_, _) => ClearAssignment();
         var divider = new Panel { BackColor = Color.FromArgb(229, 235, 237), Location = new Point(28, 170), Size = new Size(600, 1), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
         var incomingTitle = new Label { Text = sameAssignment ? "ამ EXE-ში იგივე კონფიგურაციაა" : currentUserConfigured ? "დაყენების შემდეგ შეიცვლება" : "დასაყენებელი კონფიგურაცია", ForeColor = Color.FromArgb(86, 103, 113), Font = new Font("Segoe UI", 8, FontStyle.Bold), AutoSize = true, Location = new Point(28, 194) };
         var incomingOperator = new Label { Text = $"ოპერატორი: {provisioning?.OperatorName ?? "—"}", ForeColor = Color.FromArgb(25, 53, 70), Font = new Font("Segoe UI Semibold", 11), AutoEllipsis = true, Location = new Point(28, 224), Size = new Size(600, 30), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
         var incomingPlant = new Label { Text = $"ქარხანა: {provisioning?.PlantName ?? "—"}", ForeColor = Color.FromArgb(25, 53, 70), Font = new Font("Segoe UI Semibold", 11), AutoEllipsis = true, Location = new Point(28, 260), Size = new Size(600, 30), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
-        card.Controls.AddRange([currentTitle, _currentOperator, _currentPlant, statusDot, _status, divider, incomingTitle, incomingOperator, incomingPlant]);
+        card.Controls.AddRange([currentTitle, _currentOperator, _currentPlant, statusDot, _status, _clearAssignment]);
+        if (provisioning is not null)
+            card.Controls.AddRange([divider, incomingTitle, incomingOperator, incomingPlant]);
+        else
+        {
+            card.Height = 181;
+            MinimumSize = new Size(680, 350);
+            ClientSize = new Size(720, 345);
+        }
+        int actionsY = provisioning is null ? 263 : 432;
 
-        _install = new Button { Text = sameAssignment && !ready ? "განახლება / აღდგენა" : currentUserConfigured && !sameAssignment ? "ოპერატორის შეცვლა" : ready ? "ოპერატორის დაყენება" : "კლიენტის დაყენება", BackColor = Color.FromArgb(11, 156, 85), ForeColor = Color.White, FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI Semibold", 10), Size = new Size(202, 50), Location = new Point(30, 432), Enabled = provisioning is not null, Anchor = AnchorStyles.Bottom | AnchorStyles.Left };
+        _install = new Button { Text = maintenance ? "განახლება / აღდგენა" : currentUserConfigured && !sameAssignment ? "ოპერატორის შეცვლა" : installed ? "ოპერატორის დაყენება" : "კლიენტის დაყენება", BackColor = Color.FromArgb(11, 156, 85), ForeColor = Color.White, FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI Semibold", 10), Size = new Size(202, 50), Location = new Point(30, actionsY), Enabled = maintenance || provisioning is not null, Anchor = AnchorStyles.Bottom | AnchorStyles.Left };
         _install.FlatAppearance.BorderSize = 0;
         _install.FlatAppearance.MouseOverBackColor = Color.FromArgb(8, 124, 68);
-        _install.Click += async (_, _) => await BeginAsync("install", assignOperator: true);
-        bool showRepair = ready && provisioning is not null;
+        _install.Click += async (_, _) => await BeginAsync("install", assignOperator: provisioning is not null);
+        bool showRepair = installed && provisioning is not null;
         _repair = new Button { Text = "განახლება / აღდგენა", FlatStyle = FlatStyle.Flat, Size = new Size(180, 50), Location = new Point(244, 432), Visible = showRepair, Anchor = AnchorStyles.Bottom | AnchorStyles.Left };
         _repair.Click += async (_, _) => await BeginAsync("install", assignOperator: false);
-        _uninstall = new Button { Text = "წაშლა", BackColor = Color.FromArgb(239, 243, 244), ForeColor = Color.FromArgb(160, 53, 46), FlatStyle = FlatStyle.Flat, Size = new Size(116, 50), Location = new Point(showRepair ? 436 : 244, 432), Enabled = installed, Anchor = AnchorStyles.Bottom | AnchorStyles.Left };
+        _uninstall = new Button { Text = "კლიენტის წაშლა", BackColor = Color.FromArgb(239, 243, 244), ForeColor = Color.FromArgb(160, 53, 46), FlatStyle = FlatStyle.Flat, Size = new Size(145, 50), Location = new Point(showRepair ? 436 : 244, actionsY), Enabled = installed, Anchor = AnchorStyles.Bottom | AnchorStyles.Left };
         _uninstall.FlatAppearance.BorderColor = Color.FromArgb(218, 226, 229);
-        _uninstall.Click += async (_, _) => await BeginAsync("uninstall", assignOperator: false);
+        _uninstall.Click += async (_, _) =>
+        {
+            if (MessageBox.Show(this, "კლიენტი ამ კომპიუტერიდან წაიშლება ყველა Windows მომხმარებლისთვის.",
+                _uninstall.Text, MessageBoxButtons.OKCancel, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) == DialogResult.OK)
+                await BeginAsync("uninstall", assignOperator: false);
+        };
         Controls.AddRange([user, card, _install, _repair, _uninstall]);
         if (currentUserConfigured && string.IsNullOrWhiteSpace(_storedAssignment?.OperatorName))
             Shown += ResolveStoredAssignment;
@@ -139,21 +180,43 @@ internal sealed class SetupForm : Form
     private async void ResolveStoredAssignment(object? sender, EventArgs eventArgs)
     {
         Shown -= ResolveStoredAssignment;
+        StoredAssignment? assignment = _storedAssignment;
+        if (assignment is null) return;
         try
         {
-            using var client = new HttpClient { BaseAddress = new Uri(_storedAssignment!.ApiBaseUrl.TrimEnd('/') + "/"), Timeout = TimeSpan.FromSeconds(10) };
-            using HttpResponseMessage response = await client.PostAsJsonAsync("api/agent/qr", new { _storedAssignment.OperatorId, CurrentToken = (string?)null });
+            using var client = new HttpClient { BaseAddress = new Uri(assignment.ApiBaseUrl.TrimEnd('/') + "/"), Timeout = TimeSpan.FromSeconds(10) };
+            using HttpResponseMessage response = await client.PostAsJsonAsync("api/agent/qr", new { assignment.OperatorId, CurrentToken = (string?)null });
             response.EnsureSuccessStatusCode();
             AssignmentLookup? lookup = await response.Content.ReadFromJsonAsync<AssignmentLookup>();
-            if (lookup is null) return;
-            _storedAssignment = _storedAssignment with { OperatorName = lookup.OperatorName, PlantName = lookup.PlantName };
+            if (lookup is null || !ReferenceEquals(_storedAssignment, assignment)) return;
+            _storedAssignment = assignment with { OperatorName = lookup.OperatorName, PlantName = lookup.PlantName };
             _currentOperator.Text = $"ოპერატორი: {lookup.OperatorName}";
             _currentPlant.Text = $"ქარხანა: {lookup.PlantName}";
         }
         catch
         {
-            _currentOperator.Text = $"ოპერატორი: {_storedAssignment!.OperatorId}";
+            if (!ReferenceEquals(_storedAssignment, assignment)) return;
+            _currentOperator.Text = $"ოპერატორი: {assignment.OperatorId}";
             _currentPlant.Text = "ქარხანა: მონაცემები მიუწვდომელია";
+        }
+    }
+
+    private void ClearAssignment()
+    {
+        if (MessageBox.Show(this, "ამ Windows მომხმარებლის ოპერატორის კონფიგურაცია წაიშლება.",
+            _clearAssignment.Text, MessageBoxButtons.OKCancel, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.OK) return;
+        try
+        {
+            InstalledClient.RetrySharingViolation(AgentConfigStore.RemoveUserConfiguration);
+            _storedAssignment = null;
+            _currentOperator.Text = "ოპერატორი: —";
+            _currentPlant.Text = "ქარხანა: —";
+            _status.Text = "QR კოდები გამორთულია ამ მომხმარებლისთვის.";
+            _clearAssignment.Enabled = false;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            MessageBox.Show(this, exception.Message, "კონფიგურაცია ვერ წაიშალა", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 
@@ -205,9 +268,10 @@ internal sealed class SetupForm : Form
     }
 
     private static bool CanConfigureUser() =>
-        InstalledClient.IsInstalled && File.Exists(Shortcuts.IconPath) && Shortcuts.Exists && InstalledClient.IsRunning;
+        InstalledClient.IsInstalled && MaintenanceLauncher.Current is not null &&
+        File.Exists(Shortcuts.IconPath) && Shortcuts.Exists && InstalledClient.IsRunning;
 
-    private static string UserConfigPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Factory Service Agent", "config.json");
+    private static string UserConfigPath => AgentConfigStore.UserConfigPath;
     private static StoredAssignment? ReadCurrentUserConfig()
     {
         try
@@ -273,8 +337,9 @@ internal sealed class ProgressForm : Form
             if (_action == "uninstall") await Task.Run(() => InstalledClient.WithMachineLock(Uninstall));
             else
             {
-                if (_provisioning is null) throw new InvalidDataException("ამ გამშვებს ოპერატორი არ აქვს მინიჭებული.");
-                await InstallAsync(_provisioning);
+                string? payloadUrl = _provisioning?.PayloadUrl ?? MaintenanceLauncher.Current?.PayloadUrl;
+                if (payloadUrl is null) throw new InvalidDataException("ჩამოსატვირთი პაკეტის მისამართი ვერ მოიძებნა.");
+                await InstallAsync(payloadUrl);
             }
             _progress.Style = ProgressBarStyle.Blocks; _progress.Value = 100;
             ExitCode = 0;
@@ -303,7 +368,7 @@ internal sealed class ProgressForm : Form
         }
     }
 
-    private async Task InstallAsync(Provisioning provisioning)
+    private async Task InstallAsync(string payloadUrl)
     {
         string tempRoot = Path.Combine(Path.GetTempPath(), "FactoryService-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempRoot);
@@ -312,19 +377,19 @@ internal sealed class ProgressForm : Form
             string zip = Path.Combine(tempRoot, "client.zip");
             Invoke(() => _message.Text = "კლიენტის უახლესი ვერსია იტვირთება…");
             using (var client = new HttpClient { Timeout = TimeSpan.FromMinutes(10) })
-            using (var response = await client.GetAsync(provisioning.PayloadUrl, HttpCompletionOption.ResponseHeadersRead))
+            using (var response = await client.GetAsync(payloadUrl, HttpCompletionOption.ResponseHeadersRead))
             {
                 response.EnsureSuccessStatusCode();
                 await using var target = File.Create(zip);
                 await response.Content.CopyToAsync(target);
             }
             _message.Text = "დაყენება მზადდება…";
-            await Task.Run(() => InstalledClient.WithMachineLock(() => InstallPayload(zip)));
+            await Task.Run(() => InstalledClient.WithMachineLock(() => InstallPayload(zip, payloadUrl)));
         }
         finally { try { Directory.Delete(tempRoot, true); } catch { } }
     }
 
-    private void InstallPayload(string zip)
+    private void InstallPayload(string zip, string payloadUrl)
     {
         var update = new PayloadUpdate(InstalledClient.InstallDirectory);
         bool preserveRecovery = false;
@@ -365,7 +430,8 @@ internal sealed class ProgressForm : Form
                 }
                 throw;
             }
-            Invoke(() => _message.Text = "მალსახმობები იქმნება…");
+            Invoke(() => _message.Text = "მართვის ფანჯარა და მალსახმობები მზადდება…");
+            MaintenanceLauncher.Install(payloadUrl);
             Invoke(Shortcuts.Create);
         }
         finally { if (!preserveRecovery) update.CleanUp(); }
@@ -388,9 +454,7 @@ internal sealed class ProgressForm : Form
         ServiceRegistration.Remove();
         SetLegacyTaskEnabled(true);
         Shortcuts.Remove();
-        string install = InstalledClient.InstallDirectory;
-        if (Directory.Exists(install))
-            InstalledClient.RetrySharingViolation(() => Directory.Delete(install, true));
+        MaintenanceLauncher.RemoveInstalledFiles();
     }
 
     private static void SetLegacyTaskEnabled(bool enabled)

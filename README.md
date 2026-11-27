@@ -139,7 +139,8 @@ recipient. When they run it, the launcher:
    for the Windows user who opened the launcher.
 
 Once the machine-wide client is ready, assigning an operator to another
-Windows user requires no elevation. The shortcuts open the client window.
+Windows user requires no elevation. The shortcuts open the setup window for
+updates, repairs, and operator configuration.
 Administrators can deploy [the taskbar layout](windows-agent/taskbar-layout.xml)
 through Windows device policy to pin the client automatically on managed PCs.
 

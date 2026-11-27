@@ -14,9 +14,8 @@ internal sealed class CompanionApplicationContext : ApplicationContext
     private readonly Func<AgentConfig> _loadConfiguration;
     private bool _exiting;
     private bool _warningShown;
-    private Form? _window;
 
-    public CompanionApplicationContext(bool installed, EventWaitHandle openRequested)
+    public CompanionApplicationContext(bool installed)
     {
         _loadConfiguration = installed ? AgentConfigStore.LoadUserConfiguration : AgentConfigStore.LoadOrDefault;
         try
@@ -47,89 +46,12 @@ internal sealed class CompanionApplicationContext : ApplicationContext
         // Poll ownership as well as listening for notifications: Fast User Switching and
         // console reconnects must be detected even if a session notification is missed.
         _refreshTimer = new System.Windows.Forms.Timer { Interval = 1000 };
-        _refreshTimer.Tick += async (_, _) =>
-        {
-            if (openRequested.WaitOne(0)) ShowClientWindow();
-            await _refresh.TickAsync();
-        };
+        _refreshTimer.Tick += async (_, _) => await _refresh.TickAsync();
         _refreshTimer.Start();
         SystemEvents.SessionSwitch += OnSessionSwitch;
         SystemEvents.SessionEnding += OnSessionEnding;
         Application.Idle += ShowInitialQr;
         AgentLog.User($"companion started; user={Environment.UserName}; config={(installed ? AgentConfigStore.UserConfigPath : AgentConfigStore.ConfigPath)}");
-    }
-
-    private void ShowClientWindow()
-    {
-        if (_window is null)
-        {
-            _window = new Form
-            {
-                Text = "ქართული ცემენტი — შეფასება",
-                Icon = _icon,
-                AutoScaleMode = AutoScaleMode.Dpi,
-                ClientSize = new Size(360, 181),
-                FormBorderStyle = FormBorderStyle.FixedDialog,
-                MaximizeBox = false,
-                StartPosition = FormStartPosition.CenterScreen,
-                Font = new Font("Segoe UI", 10),
-            };
-            var refresh = new Button
-            {
-                Text = "Turmo QR კოდის განახლება",
-                Location = new Point(24, 23),
-                Size = new Size(312, 45),
-            };
-            refresh.Click += async (_, _) => await _refresh.TickAsync(force: true);
-            var disable = new Button
-            {
-                Text = "QR კოდების გამორთვა",
-                Location = new Point(24, 79),
-                Size = new Size(312, 45),
-            };
-            var status = new Label
-            {
-                Location = new Point(24, 135),
-                Size = new Size(312, 30),
-                AccessibleRole = AccessibleRole.StatusBar,
-            };
-            void UpdateControls()
-            {
-                try
-                {
-                    bool configured = !string.IsNullOrWhiteSpace(_loadConfiguration().OperatorId);
-                    disable.Enabled = refresh.Enabled = configured;
-                    status.Text = configured ? "" : "QR კოდები გამორთულია ამ მომხმარებლისთვის.";
-                }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
-                {
-                    disable.Enabled = refresh.Enabled = true;
-                    status.Text = "კონფიგურაცია ვერ ჩაიტვირთა.";
-                }
-            }
-            disable.Click += async (_, _) =>
-            {
-                if (MessageBox.Show(_window,
-                    "ამ Windows მომხმარებლის ოპერატორის კონფიგურაცია წაიშლება. QR კოდების ჩასართავად ხელახლა მიანიჭეთ ოპერატორი.",
-                    "QR კოდების გამორთვა", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
-                try { AgentConfigStore.RemoveUserConfiguration(); }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-                {
-                    MessageBox.Show(_window, exception.Message, "კონფიგურაცია ვერ წაიშალა", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    return;
-                }
-                UpdateControls();
-                await _refresh.TickAsync(force: true);
-            };
-            _window.Controls.AddRange([refresh, disable, status]);
-            _window.Activated += (_, _) => UpdateControls();
-            UpdateControls();
-            _window.FormClosed += (_, _) => _window = null;
-            _window.Show();
-        }
-        if (_window.WindowState == FormWindowState.Minimized)
-            _window.WindowState = FormWindowState.Normal;
-        _window.Activate();
     }
 
     private async void ShowInitialQr(object? sender, EventArgs eventArgs)
@@ -187,7 +109,6 @@ internal sealed class CompanionApplicationContext : ApplicationContext
         _refreshTimer.Stop(); _refreshTimer.Dispose();
         ClearPanelBeforeExit();
         _refresh.Dispose();
-        _window?.Dispose();
         _trayIcon.Visible = false; _trayIcon.Dispose(); _icon.Dispose(); _uiDispatcher.Dispose();
         AgentLog.User("companion stopped"); base.ExitThreadCore();
     }

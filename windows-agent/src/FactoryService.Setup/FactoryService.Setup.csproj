@@ -8,6 +8,7 @@
     <ApplicationIcon>..\FactoryService.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="..\FactoryService.Common\FactoryService.Common.csproj" />
     <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.0" />
   </ItemGroup>
 </Project>

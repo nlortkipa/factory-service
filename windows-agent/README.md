@@ -9,8 +9,8 @@ This is a .NET 10 Windows agent split into two processes:
 - **FactoryService.Companion** runs in the signed-in user's interactive session.
   It finds the Turmo USB panel's serial port automatically and sends a 320×480 QR design when it
   starts, after a successful rating (checked every five seconds), at QR expiry, and when the session becomes active or is
-  unlocked. It also provides a tray icon. The desktop and Start menu shortcuts
-  open its window for on-demand QR refresh.
+  unlocked. It also provides a tray icon for on-demand QR refresh. The desktop
+  and Start menu shortcuts open the standard setup window.
 
 Only the **unlocked user at the physical Windows console** may publish a QR to
 the shared USB panel. Companions left running by Fast User Switching stay idle;
@@ -81,7 +81,7 @@ after locking and unlocking Windows (`Win+L`). A new Windows login also starts
 the companion with the latest configuration; restarting the whole PC is not
 required.
 
-Open the client and select **QR კოდების გამორთვა** to remove the operator
+Open the desktop shortcut and select **QR კოდების გამორთვა** to remove the operator
 assignment for the current Windows user. The shared client and other users'
 assignments stay in place. Run an operator-specific installer to assign an
 operator again.
